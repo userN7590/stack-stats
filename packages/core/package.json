@@ -1,0 +1,8 @@
+{
+  "name": "@stack-stats/core",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": { "build": "tsc --noEmit" },
+  "dependencies": { "@stack-stats/protocol": "workspace:*" }
+}

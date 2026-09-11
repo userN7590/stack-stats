@@ -1,0 +1,12 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { SYNC_LANGUAGES } from "@stack-stats/protocol";
+const web = process.argv[2];
+if (!web) throw new Error("Usage: node --import tsx scripts/check-sync-contract.mts /path/to/stack-stats-web");
+const source = await readFile(new URL("../packages/protocol/src/sync.ts", import.meta.url), "utf8");
+const vendored = await readFile(resolve(web, "src/lib/sync-contract.ts"), "utf8");
+if (source !== vendored) throw new Error("Versioned sync contracts differ; update the vendored copy and both test suites together.");
+const sql = await readFile(resolve(web, "supabase/migrations/20260910000000_profile_sync.sql"), "utf8");
+const languages = sql.match(/string_to_array\('([^']+)'/)?.[1]?.split(" ");
+if (!languages || [...new Set(languages)].sort().join(" ") !== [...SYNC_LANGUAGES].sort().join(" ")) throw new Error("SQL language allowlist differs from the contract.");
+console.log("Extension, web and SQL language contracts agree.");

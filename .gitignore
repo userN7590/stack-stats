@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.vsix
+.DS_Store
+.stackstats/
+*.db
+*.db-shm
+*.db-wal
+

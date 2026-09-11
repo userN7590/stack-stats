@@ -1,0 +1,297 @@
+{
+  "name": "stack-stats-vscode",
+  "displayName": "Stack Stats",
+  "description": "Privacy-safe, local-first developer activity analytics.",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "stackStats.showStatus",
+        "title": "Stack Stats: Show Status"
+      },
+      {
+        "command": "stackStats.showToday",
+        "title": "Stack Stats: Show Today"
+      },
+      {
+        "command": "stackStats.showCurrentSession",
+        "title": "Stack Stats: Show Current Session"
+      },
+      {
+        "command": "stackStats.showThisWeek",
+        "title": "Stack Stats: Show This Week"
+      },
+      {
+        "command": "stackStats.pause",
+        "title": "Stack Stats: Pause Tracking",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "stackStats.resume",
+        "title": "Stack Stats: Resume Tracking",
+        "icon": "$(play)"
+      },
+      {
+        "command": "stackStats.retrySync",
+        "title": "Stack Stats: Retry Local Daemon Sync"
+      },
+      {
+        "command": "stackStats.showTelemetry",
+        "title": "Stack Stats: Show Telemetry Today"
+      },
+      {
+        "command": "stackStats.compareTelemetry",
+        "title": "Stack Stats: Compare Telemetry Weeks"
+      },
+      {
+        "command": "stackStats.showPrivacy",
+        "title": "Stack Stats: Show Telemetry Privacy"
+      },
+      {
+        "command": "stackStats.refreshStats",
+        "title": "Stack Stats: Refresh Stats",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "stackStats.openDashboard",
+        "title": "Stack Stats: Open Dashboard",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "stackStats.openSettings",
+        "title": "Stack Stats: Open Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "stackStats.connectAccount",
+        "title": "Stack Stats: Connect Stack Stats Account",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "stackStats.disconnectAccount",
+        "title": "Stack Stats: Disconnect Account",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "stackStats.openProfile",
+        "title": "Stack Stats: Open Profile",
+        "icon": "$(account)"
+      },
+      {
+        "command": "stackStats.cancelAccountConnection",
+        "title": "Stack Stats: Cancel Account Connection",
+        "icon": "$(close)"
+      },
+      {
+        "command": "stackStats.enableProfileSync",
+        "title": "Stack Stats: Enable Profile Sync"
+      },
+      {
+        "command": "stackStats.disableProfileSync",
+        "title": "Stack Stats: Disable Profile Sync"
+      },
+      {
+        "command": "stackStats.syncNow",
+        "title": "Stack Stats: Sync Now"
+      },
+      {
+        "command": "stackStats.syncPrivacy",
+        "title": "Stack Stats: Manage Sync Privacy"
+      }
+    ],
+    "configuration": {
+      "title": "Stack Stats",
+      "properties": {
+        "stackStats.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Collect local coding sessions. Pause Tracking disables collection across windows."
+        },
+        "stackStats.includeProjectNames": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Include workspace folder display names in future activity metadata. Existing history is not rewritten."
+        },
+        "stackStats.collectFilesystem": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Observe coalesced filesystem notifications in eligible workspaces; writer identity remains unknown."
+        },
+        "stackStats.collectGit": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Poll Git metadata at most once per minute in trusted workspaces. Never read commit messages, authors or remotes."
+        },
+        "stackStats.collectWorkflows": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Observe VS Code task and debug lifecycles. Never read commands, arguments, output or debug configuration."
+        },
+        "stackStats.collectDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Observe severity counts on diagnostic changes. Messages and code snippets are not collected."
+        },
+        "stackStats.allowAttributionReports": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Allow cooperating extensions to report provenance for existing edit batches. Reports are claims, not verified authorship."
+        },
+        "stackStats.excludeFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "default": [],
+          "scope": "application",
+          "description": "Additional excluded file globs (*, ** and ?). Applied before all collectors and session tracking. Built-in secret/generated-file exclusions always apply."
+        },
+        "stackStats.excludeProjects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "default": [],
+          "scope": "application",
+          "description": "Exclude workspace/repository roots by full-path or folder-name glob. Existing history is retained."
+        },
+        "stackStats.rawRetentionDays": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 3650,
+          "scope": "application",
+          "description": "At startup, remove local telemetry batches delivered more than this many days ago. 0 retains indefinitely. Undelivered telemetry, session history and daemon SQLite are preserved."
+        },
+        "stackStats.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Show Stack Stats in the status bar. Hiding it does not pause tracking."
+        },
+        "stackStats.inactivityTimeoutMinutes": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "scope": "application",
+          "description": "End the current session after this many minutes without edits. Changes apply immediately and may close an idle session. This does not change the 60-second active-time evidence gap."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "stackStats",
+          "title": "Stack Stats",
+          "icon": "resources/stack-stats.svg"
+        }
+      ]
+    },
+    "views": {
+      "stackStats": [
+        {
+          "id": "stackStats.currentSession",
+          "name": "Current Session"
+        },
+        {
+          "id": "stackStats.today",
+          "name": "Today"
+        },
+        {
+          "id": "stackStats.thisWeek",
+          "name": "This Week"
+        },
+        {
+          "id": "stackStats.languages",
+          "name": "Languages"
+        },
+        {
+          "id": "stackStats.projects",
+          "name": "Projects"
+        },
+        {
+          "id": "stackStats.streak",
+          "name": "Streak"
+        },
+        {
+          "id": "stackStats.trackingStatus",
+          "name": "Tracking Status"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "stackStats.refreshStats",
+          "when": "view =~ /^stackStats\\./",
+          "group": "navigation@1"
+        },
+        {
+          "command": "stackStats.pause",
+          "when": "view == stackStats.currentSession && stackStats.trackingEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "stackStats.resume",
+          "when": "view == stackStats.currentSession && !stackStats.trackingEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "stackStats.openDashboard",
+          "when": "view == stackStats.trackingStatus",
+          "group": "navigation@3"
+        },
+        {
+          "command": "stackStats.openSettings",
+          "when": "view == stackStats.trackingStatus",
+          "group": "navigation@4"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
+    "package": "pnpm build && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "@stack-stats/core": "workspace:*",
+    "@stack-stats/protocol": "workspace:*",
+    "proper-lockfile": "4.1.2"
+  },
+  "devDependencies": {
+    "@types/proper-lockfile": "4.1.4",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.3.2",
+    "esbuild": "^0.25.4"
+  },
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist/extension.cjs",
+    "resources/stack-stats.svg",
+    "README.md",
+    "LICENSE"
+  ]
+}

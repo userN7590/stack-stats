@@ -1,0 +1,12 @@
+{
+  "name": "@stack-stats/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc --noEmit", "dev": "node --import tsx src/main.ts" },
+  "dependencies": {
+    "@stack-stats/protocol": "workspace:*",
+    "@stack-stats/storage": "workspace:*",
+    "fastify": "^5.3.3"
+  }
+}
