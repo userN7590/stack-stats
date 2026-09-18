@@ -4,14 +4,12 @@ Your coding activity, on your device. Stack Stats starts tracking automatically 
 
 ## Your sidebar
 
-Select the **Stack Stats** stack icon in the Activity Bar:
+Select the **Stack Stats** icon in the Activity Bar. There are now two native panels:
 
-- **Current Session** — estimated active coding time, files edited, lines added/removed, edit count, and session timestamps.
-- **Today** — local daily coding time, sessions, files, lines, and edits.
-- **This Week** — Monday–Sunday totals, longest active session within the week, active days, and average time per active day.
-- **Languages** and **Projects** — this week's activity ranked by active time, then edits. Expand a row for edit and line counts.
-- **Streak** — consecutive active days through today, or yesterday if you have not edited today.
-- **Tracking Status** — collection state, local storage/history status, pause/resume, and settings.
+- **Activity** puts Today first, with coding time and a compact set of line, file, edit, and session counts. Current session, This week, Languages, Projects, and Coding streak expand for detail. Today opens by default; the other groups stay collapsed until you need them. Weekly details include longest session, active days, and average active time. Language labels use familiar names such as TypeScript, with all recorded languages and projects still accessible.
+- **Account** starts collapsed and shows a single optional connection action. When connected, expand your account for Open Profile/Disconnect, and Profile sync for pending days, last success, consent and privacy controls. **On this device → Troubleshooting** holds storage/history health, idle timeout, and daemon details. Errors are surfaced with short labels and explanatory tooltips.
+
+Refresh and pause/resume are in the Activity toolbar. Settings and diagnostic reports are in its **…** menu. All existing Command Palette commands and old view-focus keybindings continue to work; Show Today/This Week/Current Session now expand and focus their group in Activity. No data, collection settings, sync consent or credentials are migrated or changed by this layout update.
 
 The status bar shows the current session's estimated active time. Click it to open Current Session. Hiding the status bar does not pause tracking.
 
@@ -23,9 +21,9 @@ Use the Command Palette:
 
 | Command | Action |
 | --- | --- |
-| Stack Stats: Show Today | Open the Today sidebar view |
-| Stack Stats: Show This Week | Open the This Week sidebar view |
-| Stack Stats: Show Current Session | Open the Current Session sidebar view |
+| Stack Stats: Show Today | Expand Today in Activity |
+| Stack Stats: Show This Week | Expand This week in Activity |
+| Stack Stats: Show Current Session | Expand Current session in Activity |
 | Stack Stats: Pause Tracking / Resume Tracking | Change background tracking across windows |
 | Stack Stats: Refresh Stats | Checkpoint and reload local history |
 | Stack Stats: Open Dashboard | Open https://stackstats.dev in your browser; no data is uploaded |
@@ -39,7 +37,7 @@ Developer commands for raw telemetry, week comparison, and local daemon retry re
 
 Stack Stats tracks locally by default. Connecting an account enables optional profile synchronization. **Connecting alone does not enable telemetry synchronization.**
 
-Use **Tracking Status → Connect Stack Stats Account**, sign in or sign up on stackstats.dev, and approve the connection. The browser returns a short-lived authorization code to VS Code; long-lived credentials never appear in callback URLs. The sidebar shows **Connected as @username**. **Open Profile** opens your public profile; when disconnected, it starts linking. **Cancel Account Connection** or the browser Cancel action cancels a pending request; closing the browser times out after ten minutes.
+Use **Account → Connect account**, sign in or sign up on stackstats.dev, and approve the connection. The browser returns a short-lived authorization code to VS Code; long-lived credentials never appear in callback URLs. The sidebar shows **@username · Connected**. **Open Profile** opens your public profile; when disconnected, it starts linking. **Cancel Account Connection** or the browser Cancel action cancels a pending request; closing the browser times out after ten minutes.
 
 **Disconnect Account** removes local account credentials without deleting your account or coding history. It also attempts server revocation; if offline, visit https://stackstats.dev/extension/connect later to revoke all editor connections. Storage failures are shown explicitly. Authentication errors never pause local tracking.
 
@@ -84,7 +82,7 @@ Run **Stack Stats: Enable Profile Sync** and approve `stats:write` in your brows
 
 Account connection alone stays identity-only. **Disable Profile Sync** persists across restarts and windows, keeps local history and existing server records, and leaves public visibility unchanged. **Sync Now** retries up to ten days; it never overrides disabled consent. **Manage Sync Privacy** opens the separate default-off publication controls. **Open Profile** uses your existing profile.
 
-Tracking Status shows pending days, last success, offline/pending and errors. Uploads run in batches, with durable bounded offline retries; local tracking never waits for the network. Multiple devices contribute independent records; overlapping activity cannot yet be deduplicated across editors. Combined file/session counts are file-days/session-days.
+Account → Profile sync shows pending days, last success, offline/pending and errors. Uploads run in batches, with durable bounded offline retries; local tracking never waits for the network. Multiple devices contribute independent records; overlapping activity cannot yet be deduplicated across editors. Combined file/session counts are file-days/session-days.
 
 Credentials and pending refresh rotations use VS Code SecretStorage. A random installation UUID, private pseudonymization salt, daily aggregate queue, consent and retry metadata use private extension storage. No sync credentials go into settings, SQLite, logs, or callback URLs. Disconnect removes local credentials, disables this installation and attempts server revocation; uploaded records remain.
 

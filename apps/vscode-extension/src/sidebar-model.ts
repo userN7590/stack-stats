@@ -26,6 +26,7 @@ export interface StatsRow {
   icon?: string;
   command?: string;
   children?: StatsRow[];
+  expanded?: boolean;
 }
 const number = (value: number) => value.toLocaleString();
 const row = (id: string, label: string, description?: string, tooltip?: string, icon?: string): StatsRow => ({ id, label, description, tooltip, icon });
@@ -133,5 +134,89 @@ export function profileSyncRows(sync: ProfileSyncState): StatsRow[] {
     { id: "toggleProfileSync", label: enabled ? "Disable Profile Sync" : "Enable Profile Sync", command: enabled ? "stackStats.disableProfileSync" : "stackStats.enableProfileSync", icon: enabled ? "debug-pause" : "cloud-upload" },
     ...(enabled ? [{ id: "syncNow", label: "Sync Now", command: "stackStats.syncNow", icon: "sync" }] : []),
     { id: "syncPrivacy", label: "Manage Sync Privacy", command: "stackStats.syncPrivacy", icon: "shield" }
+  ];
+}
+
+/** Two native panels; the original section identifiers remain command targets. */
+export const nativeSidebarViews = ["today", "trackingStatus"] as const;
+export type NativeSidebarView = typeof nativeSidebarViews[number];
+
+function compactMetrics(stats: SessionStatistics, sessions = true): StatsRow[] {
+  return [
+    row("changes", "Lines changed", `+${number(stats.linesAdded)} / −${number(stats.linesRemoved)}`, `${number(stats.linesAdded)} lines added; ${number(stats.linesRemoved)} lines removed. ${lines}`, "diff"),
+    ...metrics(stats, sessions).filter(item => ["files", "edits", "sessions"].includes(item.id))
+  ];
+}
+
+const languageNames: Record<string, string> = {
+  typescript: "TypeScript", typescriptreact: "TypeScript React", javascript: "JavaScript", javascriptreact: "JavaScript React",
+  python: "Python", rust: "Rust", go: "Go", java: "Java", csharp: "C#", cpp: "C++", c: "C", ruby: "Ruby", php: "PHP",
+  html: "HTML", css: "CSS", scss: "SCSS", json: "JSON", jsonc: "JSON with comments", yaml: "YAML", markdown: "Markdown",
+  shellscript: "Shell", plaintext: "Plain text", sql: "SQL", swift: "Swift", kotlin: "Kotlin", dart: "Dart", vue: "Vue", svelte: "Svelte"
+};
+
+export function rowsForPanel(view: NativeSidebarView, state: SidebarState): StatsRow[] {
+  if (view === "trackingStatus") return connectionRows(state);
+  const { summary } = state;
+  const current: StatsRow = {
+    ...row("currentSession", "Current session", !state.enabled ? "Paused" : summary.current ? formatDuration(summary.current.activeMs) : "Ready to code", estimate, !state.enabled ? "debug-pause" : "pulse"),
+    children: summary.current ? [...compactMetrics(summary.current, false), ...rowsForView("currentSession", state).filter(item => item.id === "started" || item.id === "lastEdit")]
+      : rowsForView("currentSession", state)
+  };
+  const warnings: StatsRow[] = state.storageError ? [{ id: "storageWarning", label: "Activity could not be saved", description: "Retry", icon: "warning", command: "stackStats.refreshStats", tooltip: "Recent activity may only be in memory. Check disk space and permissions, then refresh." }] : [];
+  if (state.historyError) warnings.push({ id: "historyWarning", label: "History may be incomplete", description: "Retry", icon: "warning", command: "stackStats.refreshStats", tooltip: "Available statistics are shown. Unreadable history is preserved for recovery." });
+  if (!state.ready) return [...warnings, row("loading", state.historyError ? "History unavailable" : "Loading your activity…", undefined, undefined, state.historyError ? "warning" : "loading~spin"), current];
+  const languages = rowsForView("languages", { ...state, historyError: false }).map(item => ({ ...item, label: languageNames[item.label] ?? item.label }));
+  const projects = rowsForView("projects", { ...state, historyError: false });
+  return [...warnings,
+    { ...row("today", "Today", formatDuration(summary.today.activeMs), `${summary.today.date}. ${estimate}`, "clock"), expanded: true,
+      children: summary.today.sessions ? compactMetrics(summary.today) : [{ ...row("empty", state.enabled ? "Your next edit starts here" : "Resume to start tracking", undefined, "Eligible edits are tracked automatically while tracking is enabled. No account is required.", state.enabled ? "edit" : "play"), ...(state.enabled ? {} : { command: "stackStats.resume" }) }] },
+    current,
+    { ...row("thisWeek", "This week", formatDuration(summary.week.activeMs), `Week of ${summary.week.from}. ${estimate}`, "calendar"),
+      children: [...compactMetrics(summary.week), ...rowsForView("thisWeek", state).filter(item => ["longest", "days", "average"].includes(item.id))] },
+    { ...row("languages", "Languages", summary.week.languages.length ? languages[0]!.label : "This week", "All languages this week, ranked by active time, then edits.", "code"), children: languages },
+    { ...row("projects", "Projects", summary.week.projects.length ? `${number(summary.week.projects.length)} this week` : "This week", "All projects this week. Expand to see the existing private project labels.", "folder"), children: projects },
+    { ...row("streak", "Coding streak", `${number(summary.week.currentStreak)} ${summary.week.currentStreak === 1 ? "day" : "days"}`, rowsForView("streak", state)[0]?.tooltip, "flame"),
+      children: rowsForView("streak", state).filter(item => item.id === "days") }
+  ];
+}
+
+function connectionRows(state: SidebarState): StatsRow[] {
+  const account = state.account ?? { status: "disconnected" };
+  const sync = state.profileSync ?? { status: "not-connected", pendingDays: 0 };
+  const connected = account.status === "connected" && account.account;
+  const connecting = account.status === "connecting";
+  const accountError = account.status === "error" || account.status === "expired";
+  const accountDetails = accountRows(account).filter(item => item.id !== "account" && item.id !== "accountMessage");
+  const syncDetails = profileSyncRows(sync).filter(item => item.id !== "cloudSync" && item.id !== "syncMessage");
+  const accountRow: StatsRow = account.status === "disconnected" ? {
+    ...row("account", "Connect account", "Optional", "Stack Stats tracks locally by default. Connecting an account enables optional profile synchronization. Connecting alone never uploads history.", "account"), command: "stackStats.connectAccount"
+  } : {
+    ...row("account", connected ? `@${account.account!.username}` : connecting ? "Connecting account…" : account.status === "expired" ? "Sign in again" : "Account unavailable",
+      connected ? "Connected" : accountError ? "Needs attention" : "Finish in browser", account.message, connecting ? "loading~spin" : accountError ? "warning" : "account"),
+    expanded: accountError || connecting,
+    children: [...(account.message ? [row("message", "Connection details", undefined, account.message, "info")] : []), ...accountDetails]
+  };
+  const syncLabels = { "not-connected": "Local only", disabled: "Off", enabled: "Up to date", syncing: "Syncing…", pending: "Waiting to sync", error: "Needs attention" };
+  const syncDescription = sync.status === "pending" && sync.pendingDays > 0 ? `${number(sync.pendingDays)} ${sync.pendingDays === 1 ? "day" : "days"} pending`
+    : sync.status === "enabled" && sync.lastSyncedAt !== undefined ? `Synced ${formatDuration(Math.max(0, Date.now() - sync.lastSyncedAt))} ago` : syncLabels[sync.status];
+  const syncRow: StatsRow = {
+    ...row("profileSync", "Profile sync", syncDescription, sync.message ?? "Optional daily aggregate uploads. Publishing on your profile is a separate choice.", sync.status === "error" ? "warning" : sync.status === "syncing" ? "sync~spin" : "cloud"),
+    expanded: sync.status === "error",
+    children: [row("privacy", "Private uploads", "Publishing is separate", "Enable Profile Sync requires browser approval. Manage Sync Privacy controls public visibility."),
+      ...(sync.message ? [row("message", "Sync details", undefined, sync.message, "info")] : []), ...syncDetails]
+  };
+  const status = rowsForView("trackingStatus", state);
+  return [accountRow,
+    // A disconnected first-time user needs one invitation, not two competing ones.
+    ...(account.status !== "disconnected" || sync.pendingDays > 0 || sync.lastSyncedAt !== undefined ? [syncRow] : []),
+    { ...row("local", "On this device", state.storageError || state.historyError ? "Needs attention" : !state.enabled ? "Paused" : "Tracking locally", "Your activity stays available offline. Expand for tracking controls and troubleshooting.", state.storageError || state.historyError ? "warning" : "shield"),
+      children: [status.find(item => item.id === "toggle")!, status.find(item => item.id === "settings")!,
+        { ...row("diagnostics", "Troubleshooting", undefined, "Storage, history, idle timeout and optional local daemon details.", "tools"),
+          children: [...status.filter(item => ["tracking", "storage", "history", "timeout", "sync"].includes(item.id)),
+            { id: "status", label: "Open diagnostic report", command: "stackStats.showStatus", icon: "output" },
+            { id: "retry", label: "Retry local daemon sync", command: "stackStats.retrySync", icon: "sync" }]
+        }]
+    }
   ];
 }

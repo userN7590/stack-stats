@@ -28,7 +28,11 @@ exports.run = async () => {
     const commands = await vscode.commands.getCommands(true);
     for (const { command } of extension.packageJSON.contributes.commands) assert(commands.includes(command), `${command} registered`);
     const views = extension.packageJSON.contributes.views.stackStats;
-    assert.equal(views.length, 7, "Seven native sidebar views contributed");
+    assert.deepEqual(views.map(view => view.name), ["Activity", "Account"], "Two focused native sidebar panels");
+    for (const section of ["currentSession", "thisWeek", "languages", "projects", "streak"]) {
+      assert(commands.includes(`stackStats.${section}.focus`), "Legacy focus command preserved");
+      await vscode.commands.executeCommand(`stackStats.${section}.focus`);
+    }
     for (const view of views) await vscode.commands.executeCommand(`${view.id}.focus`);
     const settings = vscode.workspace.getConfiguration("stackStats");
     assert.equal(settings.get("showStatusBar"), true);

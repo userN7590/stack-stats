@@ -2,7 +2,7 @@
   "name": "stack-stats-vscode",
   "displayName": "Stack Stats",
   "description": "Privacy-safe, local-first developer activity analytics.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -210,32 +210,13 @@
     "views": {
       "stackStats": [
         {
-          "id": "stackStats.currentSession",
-          "name": "Current Session"
-        },
-        {
           "id": "stackStats.today",
-          "name": "Today"
-        },
-        {
-          "id": "stackStats.thisWeek",
-          "name": "This Week"
-        },
-        {
-          "id": "stackStats.languages",
-          "name": "Languages"
-        },
-        {
-          "id": "stackStats.projects",
-          "name": "Projects"
-        },
-        {
-          "id": "stackStats.streak",
-          "name": "Streak"
+          "name": "Activity"
         },
         {
           "id": "stackStats.trackingStatus",
-          "name": "Tracking Status"
+          "name": "Account",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -243,28 +224,43 @@
       "view/title": [
         {
           "command": "stackStats.refreshStats",
-          "when": "view =~ /^stackStats\\./",
+          "when": "view == stackStats.today",
           "group": "navigation@1"
         },
         {
           "command": "stackStats.pause",
-          "when": "view == stackStats.currentSession && stackStats.trackingEnabled",
+          "when": "view == stackStats.today && stackStats.trackingEnabled",
           "group": "navigation@2"
         },
         {
           "command": "stackStats.resume",
-          "when": "view == stackStats.currentSession && !stackStats.trackingEnabled",
+          "when": "view == stackStats.today && !stackStats.trackingEnabled",
           "group": "navigation@2"
+        },
+        {
+          "command": "stackStats.openSettings",
+          "when": "view == stackStats.today",
+          "group": "settings@1"
+        },
+        {
+          "command": "stackStats.showStatus",
+          "when": "view == stackStats.today",
+          "group": "settings@2"
         },
         {
           "command": "stackStats.openDashboard",
           "when": "view == stackStats.trackingStatus",
-          "group": "navigation@3"
+          "group": "account@1"
         },
         {
-          "command": "stackStats.openSettings",
+          "command": "stackStats.syncPrivacy",
           "when": "view == stackStats.trackingStatus",
-          "group": "navigation@4"
+          "group": "account@2"
+        },
+        {
+          "command": "stackStats.enableProfileSync",
+          "when": "view == stackStats.trackingStatus",
+          "group": "account@3"
         }
       ]
     }

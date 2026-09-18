@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionTracker, dailyStatistics, weeklyStatistics } from "@stack-stats/core";
 import { randomUUID } from "node:crypto";
 import { SessionSummaryCache, inactivityMinutes } from "../apps/vscode-extension/src/stats-model.js";
-import { rowsForView, sidebarViews, statusBarPresentation, type SidebarState } from "../apps/vscode-extension/src/sidebar-model.js";
+import { rowsForView, rowsForPanel, sidebarViews, statusBarPresentation, type SidebarState } from "../apps/vscode-extension/src/sidebar-model.js";
 import { context, counts, session, source, tracker } from "./fixtures.js";
 
 async function state(): Promise<SidebarState> {
@@ -131,5 +131,52 @@ describe("configurable session grouping", () => {
     value.expire(start + 7 * 60_000);
     expect(value.isActive).toBe(false);
     expect(value.pending()[0]).toMatchObject({ endedAt: new Date(start + 6 * 60_000).toISOString(), endReason: "idle" });
+  });
+});
+
+
+describe("simplified Activity and Account panels", () => {
+  it("keeps every existing metric accessible while opening only today's details by default", async () => {
+    const view = await state(); const snapshot = session("2026-09-02T12:00:00Z");
+    view.summary = new SessionSummaryCache().summarize("2026-09-02", snapshot);
+    const activity = rowsForPanel("today", view);
+    expect(activity.map(row => row.label)).toEqual(["Today", "Current session", "This week", "Languages", "Projects", "Coding streak"]);
+    expect(activity.filter(row => row.expanded).map(row => row.id)).toEqual(["today"]);
+    const today = activity[0]!;
+    expect(today.description).toBe("30s");
+    expect(today.children).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "changes", description: "+4 / −2" }),
+      expect.objectContaining({ id: "files", description: "1" }),
+      expect.objectContaining({ id: "edits", description: "2" }),
+      expect.objectContaining({ id: "sessions", description: "1" })
+    ]));
+    expect(activity.find(row => row.id === "thisWeek")?.children?.map(row => row.id)).toEqual(expect.arrayContaining(["longest", "days", "average"]));
+    expect(activity.find(row => row.id === "languages")?.children?.[0]?.label).toBe("TypeScript");
+    expect(activity.find(row => row.id === "currentSession")?.children?.map(row => row.id)).toEqual(expect.arrayContaining(["started", "lastEdit"]));
+  });
+  it("shows one optional account invitation and keeps operational detail collapsed", async () => {
+    const view = await state(); const account = rowsForPanel("trackingStatus", view);
+    expect(account.map(row => row.id)).toEqual(["account", "local"]);
+    expect(account[0]).toMatchObject({ label: "Connect account", description: "Optional", command: "stackStats.connectAccount" });
+    expect(account.every(row => !row.expanded)).toBe(true);
+    const diagnostics = account[1]?.children?.find(row => row.id === "diagnostics");
+    expect(diagnostics?.children?.map(row => row.id)).toEqual(expect.arrayContaining(["storage", "history", "timeout", "sync"]));
+  });
+  it("keeps account errors and pending sync actionable without changing consent", async () => {
+    const view = await state();
+    const rows = rowsForPanel("trackingStatus", { ...view, account: { status: "error", message: "Network unavailable; credentials retained." }, profileSync: { status: "pending", pendingDays: 3, message: "Retrying later." } });
+    expect(rows[0]).toMatchObject({ expanded: true, icon: "warning" });
+    expect(rows[0]?.children).toContainEqual(expect.objectContaining({ command: "stackStats.connectAccount" }));
+    expect(rows.find(row => row.id === "profileSync")).toMatchObject({ description: "3 days pending" });
+    expect(rows.find(row => row.id === "profileSync")?.children).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: "stackStats.disableProfileSync" }), expect.objectContaining({ command: "stackStats.syncNow" }), expect.objectContaining({ command: "stackStats.syncPrivacy" })
+    ]));
+  });
+  it("shows a single error per issue and never presents unloaded history as zero", async () => {
+    const view = await state();
+    const rows = rowsForPanel("today", { ...view, ready: false, historyError: true, storageError: true });
+    expect(rows.map(row => row.id)).toEqual(["storageWarning", "historyWarning", "loading", "currentSession"]);
+    const paused = rowsForPanel("today", { ...view, enabled: false });
+    expect(paused.find(row => row.id === "today")?.children).toContainEqual(expect.objectContaining({ command: "stackStats.resume" }));
   });
 });
