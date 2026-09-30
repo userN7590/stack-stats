@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionTracker, dailyStatistics, weeklyStatistics } from "@stack-stats/core";
 import { randomUUID } from "node:crypto";
 import { SessionSummaryCache, inactivityMinutes } from "../apps/vscode-extension/src/stats-model.js";
-import { rowsForView, rowsForPanel, sidebarViews, statusBarPresentation, type SidebarState } from "../apps/vscode-extension/src/sidebar-model.js";
+import { agentRows, agentsDescription, rowsForView, rowsForPanel, sidebarViews, statusBarPresentation, type AgentIntegrationView, type SidebarState } from "../apps/vscode-extension/src/sidebar-model.js";
 import { context, counts, session, source, tracker } from "./fixtures.js";
 
 async function state(): Promise<SidebarState> {
@@ -178,5 +178,48 @@ describe("simplified Activity and Account panels", () => {
     expect(rows.map(row => row.id)).toEqual(["storageWarning", "historyWarning", "loading", "currentSession"]);
     const paused = rowsForPanel("today", { ...view, enabled: false });
     expect(paused.find(row => row.id === "today")?.children).toContainEqual(expect.objectContaining({ command: "stackStats.resume" }));
+  });
+});
+
+describe("tracking level in the sidebar", () => {
+  const agent = (extra: Partial<AgentIntegrationView> = {}): AgentIntegrationView => ({ tool: "claude-code", displayName: "Claude Code", state: "connected", verified: true, lastSignalAt: 0, approvalPending: false, ...extra });
+  it("shows the current level under On this device, separate from pause and from sync", async () => {
+    const view = { ...await state(), trackingMode: "moderate" as const };
+    const local = rowsForPanel("trackingStatus", view).find(row => row.id === "local")!;
+    expect(local.description).toBe("Moderate tracking");
+    expect(local.children?.map(row => row.id)).toEqual(["trackingLevel", "toggle", "settings", "diagnostics"]);
+    expect(local.children![0]).toMatchObject({ label: "Tracking level", description: "Moderate (recommended)", command: "stackStats.changeTrackingLevel", icon: "settings" });
+    expect(local.children![0]!.tooltip).toContain("Private sync and your public profile are separate choices.");
+    const custom = rowsForPanel("trackingStatus", { ...view, trackingMode: "custom" }).find(row => row.id === "local")!;
+    expect(custom.description).toBe("Custom tracking");
+    expect(custom.children![0]).toMatchObject({ description: "Custom" });
+    // Pause is its own state: the level stays visible and unchanged.
+    const paused = rowsForPanel("trackingStatus", { ...view, trackingMode: "minimal", enabled: false }).find(row => row.id === "local")!;
+    expect(paused.description).toBe("Paused");
+    expect(paused.children![0]).toMatchObject({ description: "Minimal" });
+    expect(paused.children![0]!.tooltip).toContain("Tracking is paused");
+    expect(paused.children![1]).toMatchObject({ label: "Resume Tracking", command: "stackStats.resume" });
+    expect(statusBarPresentation(view).tooltip).toContain("Tracking level: Moderate.");
+    // Without a derived level (older callers), nothing is invented.
+    expect(rowsForPanel("trackingStatus", await state()).find(row => row.id === "local")?.children?.[0]?.id).toBe("toggle");
+  });
+
+  it("pauses connected agents at levels without agent activity, without disconnecting them", async () => {
+    const view = await state();
+    const rows = agentRows({ ...view, agents: { external: "off", labels: false, integrations: [agent(), agent({ tool: "codex", displayName: "Codex", state: "available", verified: false, lastSignalAt: undefined })] } }, 60_000);
+    expect(rows[0]).toMatchObject({ label: "External changes", description: "Off at your tracking level", command: "stackStats.changeTrackingLevel" });
+    expect(rows[1]).toMatchObject({ description: "Connected · paused", icon: "debug-pause", expanded: true });
+    expect(rows[1]!.tooltip).toContain("It stays installed");
+    expect(rows[1]!.children!.map(row => row.id)).toEqual(["activity", "resume", "disconnect"]);
+    expect(rows[1]!.children![1]).toMatchObject({ command: "stackStats.setTrackingCapability", arguments: ["agent_activity", true] });
+    expect(rows[2]!.tooltip).toContain("connecting turns it back on");
+    expect(rows[2]!.children).toEqual([expect.objectContaining({ command: "stackStats.connectAgent" })]);
+    expect(agentsDescription({ external: "off", labels: false, integrations: [agent()] })).toBe("Paused");
+    // Labels on: the Phase 9E.1 rows are unchanged.
+    const on = agentRows({ ...view, agents: { external: "tracked", labels: true, integrations: [agent()] } }, 60_000);
+    expect(on[0]).toMatchObject({ description: "Tracked automatically" });
+    expect(on[0]!.command).toBeUndefined();
+    expect(on[1]!.children!.map(row => row.id)).toEqual(["activity", "disconnect"]);
+    expect(agentsDescription({ external: "tracked", labels: true, integrations: [agent()] })).toBe("1 connected");
   });
 });

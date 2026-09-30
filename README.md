@@ -12,6 +12,32 @@ Select the Stack Stats icon for two native panels: **Activity** and **Account**.
 
 The sidebar updates automatically while editing. The status bar shows `Stack Stats • 1h 42m`, `Idle`, or `Paused`; click it to open Current Session. Empty, loading, incomplete-history and storage-error states explain what is available. Project labels remain private by default. The [extension user guide](apps/vscode-extension/README.md) is included in the installable package.
 
+## How much Stack Stats tracks
+
+Run **Stack Stats: Change Tracking Level** to answer one question: *How much would you like Stack Stats to track?* It is also in the Activity view's **…** menu and under **Account → On this device → Tracking level**.
+
+| Level | What it tracks |
+| --- | --- |
+| **Minimal** | Tracks coding time, sessions, streaks, languages, projects, lines and files. Nothing else. |
+| **Moderate — Recommended** (default) | Everything in Minimal, plus hourly patterns, editor workflow, tasks and debugging, external file changes, Git activity and labels from agents you connect. |
+| **Extensive** | Everything in Moderate, plus problem counts and reports from other extensions. Connecting AI tools stays your choice. |
+
+A tracking level only changes what is collected on this device from now on. Existing history is kept.
+
+A level never:
+
+- turns on private sync;
+- changes what is public on stackstats.dev;
+- connects Claude Code or Codex.
+
+Pause Tracking is separate: it collects nothing, whatever the level.
+
+- **Advanced settings** lets you turn each capability on or off. Any combination that isn't one of the three levels shows as **Custom**.
+- **Restore Recommended Tracking** returns to Moderate.
+- Moderate is exactly what Stack Stats collected by default before levels existed. Existing installs keep their settings, and their level is read from them.
+
+See [Phase 9F: tracking levels](docs/PHASE-9F-TRACKING-LEVELS.md).
+
 ## Optional Stack Stats account
 
 Account includes optional browser-based account linking, identity, disconnect, and Open Profile actions. Credentials and pending PKCE material use VS Code SecretStorage. Authentication never gates activation or local tracking. **Optional private daily-summary sync now requires separate browser approval.** See [sync consent, protocol, privacy and staging procedure](docs/SYNC.md). See [account architecture, security, backend setup and exact F5 procedure](docs/ACCOUNTS.md). The new web routes and migration must be deployed before connecting against stackstats.dev.
@@ -26,7 +52,7 @@ New commands: **Show Telemetry Today**, **Compare Telemetry Weeks**, and **Show 
 
 External changes are tracked automatically. Connect an agent to label them.
 
-Changes made outside the editor are observed and reconciled locally with no setup, whether they come from a terminal command, a script, Claude Code, Codex or a checkout. They never count as coding time, and the writer stays "unknown".
+Changes made outside the editor are observed and reconciled locally with no setup, whether they come from a terminal command, a script, Claude Code, Codex or a checkout. They never count as coding time, and the writer stays "unknown". This happens at the Moderate and Extensive tracking levels. At Minimal, external changes and agent labels are off; connected agents stay connected but are ignored.
 
 Connecting an agent is optional and takes one click:
 
@@ -90,7 +116,10 @@ Open the Command Palette and run:
 | **Stack Stats: Retry Local Daemon Sync** | Retry pending durable snapshots and telemetry batches immediately |
 | **Stack Stats: Show Telemetry Today** | Derived edit, workflow, Git and attribution analytics |
 | **Stack Stats: Compare Telemetry Weeks** | Compare this week's observations with last week's |
-| **Stack Stats: Show Telemetry Privacy** | Collection policy, exclusions and measurement limits |
+| **Stack Stats: Change Tracking Level** | Choose Minimal, Moderate (recommended) or Extensive; only local collection changes |
+| **Stack Stats: Open Advanced Tracking Settings** | Turn individual tracking capabilities on or off; shows the resulting level |
+| **Stack Stats: Restore Recommended Tracking** | Return to Moderate; sync, publication and agent connections are untouched |
+| **Stack Stats: Show Telemetry Privacy** | Tracking level, local collection, private sync and public profile, each stated separately |
 | **Stack Stats: Show Agent Activity** | Local agent runs, agent-reported and external changes, kept separate from coding time |
 | **Stack Stats: Manage Agent Integrations** | Connect, repair or disconnect Claude Code / Codex; each change is shown and confirmed first |
 | **Stack Stats: Disconnect All Agent Integrations** | Remove every Stack Stats hook entry from agent settings (run before uninstalling) |
@@ -107,12 +136,13 @@ Today, This Week and Current Session open native sidebar views. Developer/status
 
 Settings:
 
+- **Tracking level** is read from eight collection settings in the **Tracking** section. Change it with **Change Tracking Level** or **Advanced settings** rather than one setting at a time.
 - `stackStats.enabled`: `true` by default; the pause/resume commands change this application setting.
 - `stackStats.showStatusBar`: `true` by default. Hiding it does not pause tracking or break an active interval.
 - `stackStats.inactivityTimeoutMinutes`: `5` by default, integer 1–60. Changes apply immediately and may close an already-idle session; the 60-second active-time evidence rule stays fixed.
 - `stackStats.includeProjectNames`: `false` by default. Projects use `Project <hash prefix>` labels. Opt in to workspace folder names for future records; this does not rewrite existing history.
 
-Additional telemetry settings control project/file exclusions, filesystem/Git/workflow collection, optional diagnostics and attribution reports, and raw retention. See the [complete privacy controls](docs/TELEMETRY.md#privacy-controls-and-collection-costs).
+Additional settings control project and file exclusions and raw retention. Every setting, and whether it affects local collection, sync or publication, is listed in the [Phase 9F settings inventory](docs/PHASE-9F-TRACKING-LEVELS.md#2-settings-inventory-from-the-implementation). See also the [complete privacy controls](docs/TELEMETRY.md#privacy-controls-and-collection-costs).
 
 ## Storage, privacy and recovery
 
@@ -149,6 +179,7 @@ VS Code text changes → privacy-safe metadata + pure line counter
 | `apps/vscode-extension/src/presentation.ts` | Plain-text reports and duration formatting |
 | `apps/vscode-extension/src/stats-model.ts` | Disposable weekly snapshot cache and historical active dates, calling existing core summary reducers |
 | `apps/vscode-extension/src/sidebar-model.ts` / `sidebar.ts` | Human-readable rows and native Tree Views/status bar; no persistence or duplicate aggregation logic |
+| `apps/vscode-extension/src/tracking-levels.ts` / `tracking-controls.ts` | Single source of truth for local tracking capabilities, levels, dependencies and their copy; native level and Advanced pickers that write only capability settings |
 | `packages/storage/src/index.ts` | SQLite schema v3 migration, sessions/day indexes and legacy event storage |
 | `apps/daemon` / `apps/cli` | Local authenticated API and CLI summaries/control |
 

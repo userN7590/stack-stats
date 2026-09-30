@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { writeFile, readFile, readdir, rename, mkdir } = require("node:fs/promises");
+const { writeFile, readFile, readdir, rename, mkdir, stat } = require("node:fs/promises");
 const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const { randomUUID, createHash } = require("node:crypto");
@@ -102,6 +102,73 @@ async function agentAndExternalActivity(api, root, range) {
   assert.deepEqual(state.integrations, { "claude-code": false, codex: false }, "Disabling integrations tells the hook to stop writing");
 }
 
+/** Phase 9F: tracking levels change local collection only. Sync, publication, the
+ * account and agent connections (including the vendors' own files) stay untouched. */
+async function trackingLevels(api, root, range) {
+  const ws = join(root, "workspace"), home = join(root, "daemon");
+  const settings = () => vscode.workspace.getConfiguration("stackStats");
+  const until = async (check, message) => {
+    for (let i = 0; i < 40; i++) { if (await check()) return; await sleep(100); }
+    assert.fail(message);
+  };
+  const level = async (mode, ...args) => {
+    await vscode.commands.executeCommand(...args);
+    await until(() => api.tracking.getState().mode === mode, `Tracking level becomes ${mode}`);
+  };
+  const hookState = async () => JSON.parse(await readFile(join(home, "agent-inbox-v1", "state.json"), "utf8")).integrations;
+  const external = async () => (await api.agentActivity(range)).external.unknown.events;
+  const fsEvents = async () => (await api.events({ ...range, limit: 1000 })).events.filter((event) => event.eventType === "filesystem.changed").length;
+  // Vendor files as a user would have them; a level must never rewrite them.
+  const claudeConfig = join(process.env.CLAUDE_CONFIG_DIR, "settings.json"), codexConfig = join(process.env.CODEX_HOME, "hooks.json");
+  await mkdir(process.env.CLAUDE_CONFIG_DIR, { recursive: true }); await mkdir(process.env.CODEX_HOME, { recursive: true });
+  await writeFile(claudeConfig, '{\n  "model": "user-choice",\n  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "echo mine" }] }] }\n}\n');
+  await writeFile(codexConfig, '{"hooks":{}}\n');
+  const vendor = async () => [await readFile(claudeConfig, "utf8"), await readFile(codexConfig, "utf8"), (await stat(claudeConfig)).mtimeMs, (await stat(codexConfig)).mtimeMs];
+  const vendorBefore = await vendor();
+  // A connected agent, as far as Stack Stats' own switch is concerned.
+  await settings().update("agentIntegrations.claudeCode", true, vscode.ConfigurationTarget.Global);
+  await until(async () => (await hookState())["claude-code"] === true, "Connected agent is accepted at Moderate");
+  const unrelated = () => ({ sync: settings().get("syncHourlyActivity"), claude: settings().get("agentIntegrations.claudeCode"), codex: settings().get("agentIntegrations.codex"),
+    enabled: settings().get("enabled"), retention: settings().get("rawRetentionDays"), account: api.account.getState().status, profileSync: api.profileSync.getState().status });
+  const before = unrelated();
+  assert.equal(api.tracking.getState().mode, "moderate");
+
+  await level("minimal", "stackStats.changeTrackingLevel", "minimal");
+  await until(async () => (await hookState())["claude-code"] === false, "Minimal pauses agent labels in the hook state");
+  assert.equal(settings().get("agentIntegrations.claudeCode"), true, "…without disconnecting the agent");
+  const [externalAtMinimal, fsAtMinimal] = [await external(), await fsEvents()];
+  await writeFile(join(ws, "minimal-external.ts"), "export const minimal = 1;\n");
+  await sleep(2500);
+  assert.equal(await external(), externalAtMinimal, "Minimal records no external changes");
+  assert.equal(await fsEvents(), fsAtMinimal, "Minimal records no filesystem notifications");
+
+  await level("moderate", "stackStats.changeTrackingLevel", "moderate");
+  await until(async () => (await hookState())["claude-code"] === true, "Moderate resumes labels for the still-connected agent");
+  await writeFile(join(ws, "moderate-external.ts"), "export const moderate = 1;\n");
+  await sleep(2500);
+  assert(await external() > externalAtMinimal, "Moderate tracks external changes automatically");
+
+  await level("extensive", "stackStats.changeTrackingLevel", "extensive");
+  assert.deepEqual(api.tracking.getState().capabilities, { coding_activity: true, activity_timeline: true, editor_events: true, tasks_debugging: true, problem_counts: true,
+    external_changes: true, git_activity: true, agent_activity: true, extension_reports: true });
+  await level("custom", "stackStats.setTrackingCapability", "git_activity", false);
+  await level("moderate", "stackStats.restoreRecommendedTracking");
+  for (const key of ["collectActivityTimeline", "collectEditorEvents", "collectWorkflows", "collectDiagnostics", "collectFilesystem", "collectGit", "collectAgentActivity", "allowAttributionReports"]) {
+    assert.equal(settings().inspect(key).globalValue, undefined, `${key}: the recommended level leaves no override behind`);
+  }
+  // Pause is separate from the level.
+  await vscode.commands.executeCommand("stackStats.pause");
+  await until(() => api.tracking.getState().paused, "Pause is reflected");
+  assert.equal(api.tracking.getState().mode, "moderate", "Pausing does not change the tracking level");
+  await vscode.commands.executeCommand("stackStats.resume");
+  await until(() => !api.tracking.getState().paused, "Resume is reflected");
+  await vscode.commands.executeCommand("stackStats.showPrivacy");
+
+  assert.deepEqual(unrelated(), before, "Levels never change sync, publication, account, connections or retention");
+  assert.deepEqual(await vendor(), vendorBefore, "Levels never touch Claude Code or Codex configuration");
+  await settings().update("agentIntegrations.claudeCode", false, vscode.ConfigurationTarget.Global);
+}
+
 exports.run = async () => {
   const root = process.env.STACK_STATS_SMOKE_DIR;
   try {
@@ -111,6 +178,8 @@ exports.run = async () => {
     assert.equal(api.apiVersion, "2.0");
     assert.equal(api.account.getState().status, "disconnected", "New profile remains local-only");
     assert.equal(api.profileSync.getState().status, "not-connected", "New installation has no sync consent");
+    assert.deepEqual(api.tracking.getState(), { mode: "moderate", paused: false, capabilities: { coding_activity: true, activity_timeline: true, editor_events: true,
+      tasks_debugging: true, problem_counts: false, external_changes: true, git_activity: true, agent_activity: true, extension_reports: false } }, "A clean profile starts at the recommended level");
     await vscode.commands.executeCommand("stackStats.syncNow");
     await vscode.commands.executeCommand("stackStats.disableProfileSync");
     assert.equal(api.profileSync.getState().status, "not-connected", "Sync commands cannot authorize uploads");
@@ -183,6 +252,9 @@ exports.run = async () => {
     }
     assert.equal((await api.query(range)).edits.editCount, 0, "Navigating/refreshing the UI does not manufacture activity");
     await agentAndExternalActivity(api, root, range);
+    // The attribution check above opted into reports; start the level checks from the default.
+    await vscode.workspace.getConfiguration("stackStats").update("allowAttributionReports", undefined, vscode.ConfigurationTarget.Global);
+    await trackingLevels(api, root, range);
     await writeFile(join(root, "passed"), "passed");
   } catch (error) {
     await writeFile(join(root, "failed"), error.stack ?? String(error)); throw error;

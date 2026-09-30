@@ -58,6 +58,23 @@
         "title": "Stack Stats: Show Telemetry Privacy"
       },
       {
+        "command": "stackStats.changeTrackingLevel",
+        "title": "Stack Stats: Change Tracking Level",
+        "icon": "$(settings)"
+      },
+      {
+        "command": "stackStats.openAdvancedTracking",
+        "title": "Stack Stats: Open Advanced Tracking Settings"
+      },
+      {
+        "command": "stackStats.restoreRecommendedTracking",
+        "title": "Stack Stats: Restore Recommended Tracking"
+      },
+      {
+        "command": "stackStats.setTrackingCapability",
+        "title": "Stack Stats: Set Tracking Capability"
+      },
+      {
         "command": "stackStats.showAgentActivity",
         "title": "Stack Stats: Show Agent Activity"
       },
@@ -144,115 +161,177 @@
         "title": "Stack Stats: Manage Sync Privacy"
       }
     ],
-    "configuration": {
-      "title": "Stack Stats",
-      "properties": {
-        "stackStats.enabled": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Collect local coding sessions. Pause Tracking disables collection across windows."
-        },
-        "stackStats.includeProjectNames": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Include workspace folder display names in future activity metadata. Existing history is not rewritten."
-        },
-        "stackStats.collectFilesystem": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Observe filesystem changes in eligible workspaces automatically, with no setup: coalesced notification counts plus local-only reconciled external-change records (open-document reloads supply diff lines). The writer stays unknown unless a connected agent reports it. External changes never count as coding time."
-        },
-        "stackStats.collectGit": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Poll Git metadata at most once per minute in trusted workspaces. Never read commit messages, authors or remotes."
-        },
-        "stackStats.collectWorkflows": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Observe VS Code task and debug lifecycles. Never read commands, arguments, output or debug configuration."
-        },
-        "stackStats.collectDiagnostics": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Observe severity counts on diagnostic changes. Messages and code snippets are not collected."
-        },
-        "stackStats.allowAttributionReports": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Allow cooperating extensions to report provenance for existing edit batches. Reports are claims, not verified authorship."
-        },
-        "stackStats.agentIntegrations.claudeCode": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
-          "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
-        },
-        "stackStats.agentIntegrations.codex": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
-          "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
-        },
-        "stackStats.excludeFiles": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 512
+    "configuration": [
+      {
+        "title": "Tracking",
+        "order": 1,
+        "properties": {
+          "stackStats.enabled": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "order": 0,
+            "description": "Collect local activity. Pause Tracking turns this off in every window: nothing is collected while paused, whatever your tracking level. Existing history is kept."
           },
-          "default": [],
-          "scope": "application",
-          "description": "Additional excluded file globs (*, ** and ?). Applied before all collectors and session tracking. Built-in secret/generated-file exclusions always apply."
-        },
-        "stackStats.excludeProjects": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 512
+          "stackStats.collectActivityTimeline": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**Hourly activity patterns.** When during the day you code, plus typing detail such as characters and undo/redo counts. Timestamped 15-second records without any text, stored on this device. Uploaded only if you also turn on hourly sync. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Hourly activity patterns: when during the day you code, plus typing detail such as characters and undo/redo counts. Timestamped 15-second records without any text, stored on this device. Uploaded only if you also turn on hourly sync. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 1
           },
-          "default": [],
-          "scope": "application",
-          "description": "Exclude workspace/repository roots by full-path or folder-name glob. Existing history is retained."
-        },
-        "stackStats.rawRetentionDays": {
-          "type": "integer",
-          "default": 30,
-          "minimum": 0,
-          "maximum": 3650,
-          "scope": "application",
-          "description": "At startup, remove local telemetry batches delivered more than this many days ago. 0 retains indefinitely. Undelivered telemetry, session history and daemon SQLite are preserved."
-        },
-        "stackStats.syncHourlyActivity": {
-          "type": "boolean",
-          "default": false,
-          "scope": "application",
-          "description": "Include private UTC hourly activity aggregates when Profile Sync is enabled and the server supports the richer contract. This can reveal work schedules. Public sharing remains a separate choice. Disabling queues replacements without hourly data; existing server data changes only after successful sync."
-        },
-        "stackStats.showStatusBar": {
-          "type": "boolean",
-          "default": true,
-          "scope": "application",
-          "description": "Show Stack Stats in the status bar. Hiding it does not pause tracking."
-        },
-        "stackStats.inactivityTimeoutMinutes": {
-          "type": "integer",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 60,
-          "scope": "application",
-          "description": "End the current session after this many minutes without edits. Changes apply immediately and may close an idle session. This does not change the 60-second active-time evidence gap."
+          "stackStats.collectEditorEvents": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**Editor workflow.** Saves, switches between files, window focus, and files created, renamed or deleted in VS Code. Event counts and private file IDs, never file names or contents. Stored on this device. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Editor workflow: saves, switches between files, window focus, and files created, renamed or deleted in VS Code. Event counts and private file IDs, never file names or contents. Stored on this device. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 2
+          },
+          "stackStats.collectWorkflows": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**Tasks and debugging.** Build and test task runs and debug sessions started in VS Code: task type, exit code and timing. Never commands, arguments, output or debug configuration. Stored on this device. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Tasks and debugging: build and test task runs and debug sessions started in VS Code: task type, exit code and timing. Never commands, arguments, output or debug configuration. Stored on this device. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 3
+          },
+          "stackStats.collectDiagnostics": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "markdownDescription": "**Problem counts.** Error and warning counts for files you change. Counts by severity only, never messages or code. Stored on this device. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Problem counts: error and warning counts for files you change. Counts by severity only, never messages or code. Stored on this device. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 4
+          },
+          "stackStats.collectFilesystem": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**External file changes.** Changes made outside the editor by terminals, scripts, agents or checkouts, with the writer unknown. Change counts, and line counts for files open in VS Code; never file contents. Never counted as coding time. Stored on this device, never synced. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "External file changes: changes made outside the editor by terminals, scripts, agents or checkouts, with the writer unknown. Change counts, and line counts for files open in VS Code; never file contents. Never counted as coding time. Stored on this device, never synced. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 5
+          },
+          "stackStats.collectGit": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**Git activity.** Branch switches and new commits, checked at most once a minute in trusted workspaces. Private commit and branch IDs and changed-line counts; never commit messages, authors or remote URLs. Stored on this device. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Git activity: branch switches and new commits, checked at most once a minute in trusted workspaces. Private commit and branch IDs and changed-line counts; never commit messages, authors or remote URLs. Stored on this device. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 6
+          },
+          "stackStats.collectAgentActivity": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "markdownDescription": "**Agent activity.** Labels changes and runs from agents you connect in the Stack Stats **Agents** view, such as Claude Code or Codex. Connecting is always a separate, confirmed step. Turning this off ignores every connected agent without removing its hook. Needs **External file changes**. Stored on this device, never synced. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Agent activity: labels changes and runs from agents you connect in the Stack Stats Agents view, such as Claude Code or Codex. Connecting is always a separate, confirmed step. Turning this off ignores every connected agent without removing its hook. Needs External file changes. Stored on this device, never synced. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 7
+          },
+          "stackStats.allowAttributionReports": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "markdownDescription": "**Reports from other extensions.** Lets cooperating extensions label your edits as human- or AI-made. Labels are claims, not proof. Needs **Hourly activity patterns**. Stored on this device. Part of your [tracking level](command:stackStats.changeTrackingLevel).",
+            "description": "Reports from other extensions: lets cooperating extensions label your edits as human- or AI-made. Labels are claims, not proof. Needs Hourly activity patterns. Stored on this device. Part of your tracking level (Stack Stats: Change Tracking Level).",
+            "order": 8
+          }
+        }
+      },
+      {
+        "title": "Privacy and storage",
+        "order": 2,
+        "properties": {
+          "stackStats.includeProjectNames": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "description": "Include workspace folder display names in future activity metadata. Existing history is not rewritten."
+          },
+          "stackStats.excludeFiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "default": [],
+            "scope": "application",
+            "description": "Additional excluded file globs (*, ** and ?). Applied before all collectors and session tracking. Built-in secret/generated-file exclusions always apply."
+          },
+          "stackStats.excludeProjects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "default": [],
+            "scope": "application",
+            "description": "Exclude workspace/repository roots by full-path or folder-name glob. Existing history is retained."
+          },
+          "stackStats.rawRetentionDays": {
+            "type": "integer",
+            "default": 30,
+            "minimum": 0,
+            "maximum": 3650,
+            "scope": "application",
+            "description": "At startup, remove local telemetry batches delivered more than this many days ago. 0 retains indefinitely. Undelivered telemetry, session history and daemon SQLite are preserved."
+          }
+        }
+      },
+      {
+        "title": "Agents",
+        "order": 3,
+        "properties": {
+          "stackStats.agentIntegrations.claudeCode": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
+            "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
+          },
+          "stackStats.agentIntegrations.codex": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
+            "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
+          }
+        }
+      },
+      {
+        "title": "Profile sync",
+        "order": 4,
+        "properties": {
+          "stackStats.syncHourlyActivity": {
+            "type": "boolean",
+            "default": false,
+            "scope": "application",
+            "description": "Include private UTC hourly activity aggregates when Profile Sync is enabled and the server supports the richer contract. This can reveal work schedules. Hourly data exists only while Hourly activity patterns is part of your tracking level. Public sharing remains a separate choice. Disabling queues replacements without hourly data; existing server data changes only after successful sync."
+          }
+        }
+      },
+      {
+        "title": "Display",
+        "order": 5,
+        "properties": {
+          "stackStats.showStatusBar": {
+            "type": "boolean",
+            "default": true,
+            "scope": "application",
+            "description": "Show Stack Stats in the status bar. Hiding it does not pause tracking."
+          },
+          "stackStats.inactivityTimeoutMinutes": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 60,
+            "scope": "application",
+            "description": "End the current session after this many minutes without edits. Changes apply immediately and may close an idle session. This does not change the 60-second active-time evidence gap."
+          }
         }
       }
-    },
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -295,6 +374,11 @@
           "command": "stackStats.resume",
           "when": "view == stackStats.today && !stackStats.trackingEnabled",
           "group": "navigation@2"
+        },
+        {
+          "command": "stackStats.changeTrackingLevel",
+          "when": "view == stackStats.today",
+          "group": "settings@0"
         },
         {
           "command": "stackStats.openSettings",
@@ -360,6 +444,10 @@
       "commandPalette": [
         {
           "command": "stackStats.setupAgentIntegrations",
+          "when": "false"
+        },
+        {
+          "command": "stackStats.setTrackingCapability",
           "when": "false"
         }
       ]

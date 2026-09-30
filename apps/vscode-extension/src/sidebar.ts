@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { agentsDescription, rowsForPanel, nativeSidebarViews, sidebarViews, statusBarPresentation, type SidebarState, type SidebarView, type NativeSidebarView, type StatsRow } from "./sidebar-model.js";
+import { modeLabel } from "./tracking-levels.js";
 
 class StatsProvider implements vscode.TreeDataProvider<StatsRow>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<StatsRow | undefined>();
@@ -64,7 +65,7 @@ export class StatsSidebar implements vscode.Disposable {
   update(state: SidebarState): void {
     this.state = state;
     for (const { id, provider, view } of this.entries) {
-      view.description = id === "today" ? !state.enabled ? "Paused" : state.refreshing ? "Refreshing…" : "Tracking" : id === "agents" ? agentsDescription(state.agents) : state.account?.status === "connected" ? `@${state.account.account?.username ?? "Connected"}` : state.account?.status === "connecting" ? "Connecting…" : state.account?.status === "error" || state.account?.status === "expired" ? "Needs attention" : "Optional";
+      view.description = id === "today" ? !state.enabled ? "Paused" : state.refreshing ? "Refreshing…" : state.trackingMode ? `Tracking · ${modeLabel(state.trackingMode)}` : "Tracking" : id === "agents" ? agentsDescription(state.agents) : state.account?.status === "connected" ? `@${state.account.account?.username ?? "Connected"}` : state.account?.status === "connecting" ? "Connecting…" : state.account?.status === "error" || state.account?.status === "expired" ? "Needs attention" : "Optional";
       view.message = undefined;
       provider.refresh();
     }

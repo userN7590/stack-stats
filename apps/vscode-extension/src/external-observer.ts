@@ -40,7 +40,7 @@ export interface ObserverOptions {
   inbox?: AgentInbox;
   /** Tracking enabled and not shutting down. */
   collecting: () => boolean;
-  /** stackStats.collectFilesystem. */
+  /** The External file changes capability of the current tracking level. */
   filesystem: () => boolean;
   integrations: () => ReadonlySet<AgentTool>;
   telemetry: () => Promise<TelemetryEvent[]>;

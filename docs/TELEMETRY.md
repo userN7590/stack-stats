@@ -25,6 +25,24 @@ Stack Stats now has three layers: normalized observations, reusable reducers, an
 | `attribution.report` | Target edit-event UUIDs, reported human/AI actor, known agent category and salted provider ID | Optional, off by default. Explicit claims, never verified authorship. Supported agent labels: Codex, Claude Code, Cursor and Other. No automatic integrations or agent-installation detection are implied. |
 | `collector.coverage` | Collector enabled/disabled/gap state and bounded-buffer/history-limit reasons | Makes known omissions visible. A lack of a gap event is not proof of complete capture, especially after crashes or OS watcher loss. |
 
+### Tracking levels (Phase 9F)
+
+Each event family belongs to one local tracking capability. [`tracking-levels.ts`](../apps/vscode-extension/src/tracking-levels.ts) defines the capabilities and which level includes each. The collectors consult an immutable snapshot rebuilt only when settings change. See [PHASE-9F-TRACKING-LEVELS.md](PHASE-9F-TRACKING-LEVELS.md) for the level matrix.
+
+| Capability (setting) | Event types |
+| --- | --- |
+| Coding activity (always on while tracking) | Session snapshots in `sessions-v1`; not part of this journal |
+| Hourly activity patterns (`collectActivityTimeline`) | `editor.edit`, `activity.interval`, `session.lifecycle`, and therefore the `hourly-v1` projection |
+| Editor workflow (`collectEditorEvents`) | `file.saved`, `file.lifecycle`, `context.switched`, `window.focus`; local save-participant records |
+| Tasks and debugging (`collectWorkflows`) | `task.lifecycle`, `debug.lifecycle` |
+| Problem counts (`collectDiagnostics`) | `diagnostics.snapshot` |
+| External file changes (`collectFilesystem`) | `filesystem.changed`; local external-change records (Phase 9E) |
+| Git activity (`collectGit`) | `git.repository`, `git.head_changed`, `git.commit_observed` |
+| Agent activity (`collectAgentActivity`; needs external file changes) | Local agent signals and agent-reported changes (Phase 9E), only from connected agents |
+| Reports from other extensions (`allowAttributionReports`; needs the activity timeline) | `attribution.report` |
+
+`collector.coverage` records which capabilities are on. The protocol's fixed `editor` coverage entry follows the activity timeline. A level changes only future collection: a range spanning a change contains both, and nothing already recorded is removed.
+
 VS Code's [document, file-operation, task, debug and watcher APIs](https://code.visualstudio.com/api/references/vscode-api) provide these observations but do not expose a universal edit-author field. Git statistics use [machine-readable numstat with external diff/text conversion disabled](https://git-scm.com/docs/git-diff). No timestamps or operation shapes are used to guess that Codex, Claude Code or Cursor produced a change.
 
 ## Event and storage contract
@@ -185,7 +203,13 @@ New commands: **Stack Stats: Show Telemetry Today**, **Compare Telemetry Weeks**
 - Project/file/branch/commit/debug-type/provider identifiers are salted or required to be hashed. Raw telemetry omits project display names. The existing session setting for project-name opt-in remains separate. Hashes are pseudonyms, not anonymization against every possible correlation.
 - `stackStats.excludeFiles` and `excludeProjects` accept the documented `*`, `**`, `?` glob subset. Project matching includes root paths/names and excluded ancestors for nested observations. Checks apply before session collection and all new eligible sources. Invalid policies fail closed. Renames do not expose excluded endpoints. Settings affect future collection; they do not erase existing records.
 - Built-in file exclusions cover `.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `.venv`, `.env`/`.env.*`, `.pem`, `.key`, `.ssh`, `.aws`, and `secrets` paths. Add organization-specific exclusions. These patterns are always applied; they are not a claim to identify every sensitive filename.
-- Filesystem, Git and workflow collectors default on; `collectFilesystem`, `collectGit` and `collectWorkflows` disable them. Diagnostics and attribution reports default off. Git subprocesses run only in trusted workspaces. Pause stops new observations; it can still deliver already-recorded data. CLI pause only pauses daemon ingestion.
+- **Stack Stats: Change Tracking Level** sets what is collected.
+  - **Moderate**, the default, is exactly the pre-9F default: activity timeline, editor workflow, tasks and debugging, external file changes, Git and labels from connected agents.
+  - **Minimal** keeps only session statistics.
+  - **Extensive** adds diagnostics and attribution reports.
+  - **Advanced settings** exposes each capability, and **Custom** is any other combination.
+  - Levels never change sync, publication, retention or agent connections.
+- Git subprocesses run only in trusted workspaces. Pause stops new observations at every level; it can still deliver already-recorded data. CLI pause only pauses daemon ingestion.
 - `stackStats.rawRetentionDays` defaults to 30. At activation, acknowledged raw batch files older than that storage age are pruned. `0` retains indefinitely. Undelivered batches, legacy/session history and daemon SQLite are preserved. A source shutdown/restart does not backfill the missed period. Long-term retention/deletion of the SQLite mirror remains an explicit operator responsibility.
 - One existing 15-second timer handles checkpoints, collector flushes and retry scheduling. Edits do no filesystem writes, source scans or HTTP requests. The edit map coalesces bursts; raw memory is capped at 2,000 pending observations plus sealed retry batches. Overflow emits a coverage gap. Pending delivery retains IDs rather than whole historical payloads in memory.
 - Filesystem watching is potentially expensive on large/network workspaces. It uses VS Code's workspace watcher and respects its exclusions, then applies Stack Stats eligibility filters. Notifications are coalesced; pending watcher keys cap at 1,000. Turning collection off prevents recording, although the lightweight watcher subscription remains registered until extension shutdown.

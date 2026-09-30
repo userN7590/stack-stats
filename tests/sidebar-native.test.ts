@@ -5,6 +5,7 @@ import { session } from "./fixtures.js";
 
 const host = vi.hoisted(() => ({
   providers: new Map<string, { getChildren(row?: StatsRow): StatsRow[]; getParent(row: StatsRow): StatsRow | undefined; getTreeItem(row: StatsRow): any; refresh(): void }>(),
+  views: new Map<string, { description?: string }>(),
   aliases: new Map<string, () => Promise<void>>(),
   visible: true, status: { show: vi.fn(), hide: vi.fn(), dispose: vi.fn(), text: "", command: "" },
   fire: vi.fn(), execute: vi.fn(), reveal: vi.fn(), disposed: vi.fn(), aliasDisposed: vi.fn()
@@ -20,13 +21,15 @@ vi.mock("vscode", () => ({
     createStatusBarItem: () => host.status,
     createTreeView: (id: string, options: { treeDataProvider: any }) => {
       host.providers.set(id, options.treeDataProvider);
-      return { dispose: host.disposed, reveal: host.reveal };
+      const view = { dispose: host.disposed, reveal: host.reveal, description: undefined as string | undefined };
+      host.views.set(id, view);
+      return view;
     }
   }
 }));
 import { StatsSidebar } from "../apps/vscode-extension/src/sidebar.js";
 
-beforeEach(() => { vi.clearAllMocks(); host.providers.clear(); host.aliases.clear(); host.visible = true; });
+beforeEach(() => { vi.clearAllMocks(); host.providers.clear(); host.views.clear(); host.aliases.clear(); host.visible = true; });
 const state = (): SidebarState => ({ summary: new SessionSummaryCache().summarize("2026-09-02"), enabled: true,
   ready: true, refreshing: false, historyError: false, storageError: false, idleMinutes: 5, syncConfigured: false });
 describe("native VS Code sidebar adapter", () => {
@@ -45,8 +48,11 @@ describe("native VS Code sidebar adapter", () => {
       expect(host.reveal).toHaveBeenLastCalledWith(expect.objectContaining({ id: `today/${section}` }), expect.objectContaining({ expand: 1 }));
     }
     expect(host.status.command).toBe("stackStats.showCurrentSession");
+    ui.update({ ...state(), trackingMode: "custom" });
+    expect(host.views.get("stackStats.today")!.description).toBe("Tracking · Custom");
     ui.update({ ...state(), enabled: false });
     expect(host.status.text).toContain("Paused");
+    expect(host.views.get("stackStats.today")!.description).toBe("Paused");
     host.visible = false; ui.update(state()); expect(host.status.hide).toHaveBeenCalledOnce();
     ui.dispose(); expect(host.status.dispose).toHaveBeenCalledOnce(); expect(host.disposed).toHaveBeenCalledTimes(6); expect(host.aliasDisposed).toHaveBeenCalledTimes(5);
   });

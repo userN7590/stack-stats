@@ -26,6 +26,8 @@ import { formatAgentActivity } from "./agent-report.js";
 import { hookTools, type HookTool } from "./agent-adapters.js";
 import { AgentIntegrationManager, EDITOR_EXTENSIONS, IntegrationError, connectPrompt, disconnectPrompt, statusSummary, type ChangePreview, type IntegrationStatus } from "./agent-integrations.js";
 import { EXTERNAL_CHANGES_MESSAGE } from "./sidebar-model.js";
+import { CAPABILITIES, RECOMMENDED_LEVEL, agentLabelsNote, formatPrivacy } from "./tracking-levels.js";
+import { TrackingControls, readSetting, readTracking } from "./tracking-controls.js";
 
 const CHECKPOINT_MS = 15_000;
 /** The hook fails closed on stale state; refresh it well inside that window. */
@@ -67,14 +69,22 @@ export async function activate(context: vscode.ExtensionContext) {
   let policy: PrivacyPolicy;
   let idleMinutes = inactivityMinutes(vscode.workspace.getConfiguration("stackStats").get("inactivityTimeoutMinutes"));
   try { policy = readPolicy(); } catch { policy = new PrivacyPolicy(["**"], ["**"]); log("Invalid exclusion settings: collection is disabled until corrected."); }
+  // Immutable capability snapshot, rebuilt only when settings change. Collectors read
+  // its fields; nothing on the edit path reads configuration.
+  let tracking = readTracking();
   const tracker = new SessionTracker({
     createId: randomUUID, timeZone, idleTimeoutMs: idleMinutes * 60_000,
     source: { adapter: "vscode", adapterVersion: context.extension.packageJSON.version as string, editorName: vscode.env.appName, editorVersion: vscode.version, installationId },
-    onInterval: (identity, from, to, sessionId) => buffer.interval(identity, from, to, sessionId),
-    onLifecycle: (sessionId, at, state, reason) => { buffer.emit("session.lifecycle", { state, reason }, { sessionId }, at); }
+    onInterval: (identity, from, to, sessionId) => { if (tracking.capabilities.activity_timeline) buffer.interval(identity, from, to, sessionId); },
+    onLifecycle: (sessionId, at, state, reason) => { if (tracking.capabilities.activity_timeline) buffer.emit("session.lifecycle", { state, reason }, { sessionId }, at); }
   });
   const metadata = new DocumentMetadata(salt, () => policy);
-  const collector = new DocumentCollector(tracker, (event) => { buffer.edit(event, tracker.sessionId); observer.editorEdit(event); });
+  // Sessions (coding activity) always run while tracking is on; the timeline and the
+  // save-participant subset are separate capabilities.
+  const collector = new DocumentCollector(tracker, (event) => {
+    if (tracking.capabilities.activity_timeline) buffer.edit(event, tracker.sessionId);
+    if (tracking.capabilities.editor_events) observer.editorEdit(event);
+  });
   let historyWarning = false;
   const store = new LocalSessionStore(join(context.globalStorageUri.fsPath, "sessions-v1"), message => { historyWarning = true; log(message); });
   // A missing/unreadable privacy salt must fail sync closed, never tracking.
@@ -97,6 +107,12 @@ export async function activate(context: vscode.ExtensionContext) {
   let saves: Promise<void> = Promise.resolve();
   const settings = () => vscode.workspace.getConfiguration("stackStats");
   const integrationSettings = () => ({ "claude-code": settings().get("agentIntegrations.claudeCode", false), codex: settings().get("agentIntegrations.codex", false) });
+  /** Connections gated by the tracking level's agent capability. The hook state and the
+   * inbox only ever see this, so a level can pause labels but never disconnect. */
+  const agentLabels = () => {
+    const connected = integrationSettings(), on = tracking.capabilities.agent_activity;
+    return { "claude-code": on && connected["claude-code"], codex: on && connected.codex };
+  };
   const ledger = new ProvenanceLedger(join(context.globalStorageUri.fsPath, "provenance-v1"), log);
   const inbox = new AgentInbox(agentHome());
   const bundledHook = join(context.extensionPath, "dist", "agent-hook.cjs");
@@ -118,10 +134,11 @@ export async function activate(context: vscode.ExtensionContext) {
   let agentStatusRequest = 0;
   // Agent/external provenance is local-only and never extends human sessions.
   const observer = new ExternalChangeObserver({ installationId, metadata, hash: (value) => hash(value, salt), policy: () => policy, ledger, inbox,
-    collecting: () => enabled && !stopped, filesystem: () => settings().get("collectFilesystem", true),
-    integrations: () => new Set(hookTools.filter((tool) => integrationSettings()[tool])), telemetry: () => telemetry.events(), log });
+    collecting: () => enabled && !stopped, filesystem: () => tracking.capabilities.external_changes,
+    integrations: () => new Set(hookTools.filter((tool) => agentLabels()[tool])), telemetry: () => telemetry.events(), log });
   context.subscriptions.push(observer);
-  const workflows = new WorkflowCollectors(buffer, metadata, (value) => hash(value, salt), () => policy, () => enabled && !stopped, (uri, operation) => observer.watcher(uri, operation));
+  const workflows = new WorkflowCollectors(buffer, metadata, (value) => hash(value, salt), () => policy, () => enabled && !stopped, () => tracking.capabilities,
+    (uri, operation) => observer.watcher(uri, operation));
   const git = new GitObserver(buffer, (value) => hash(value, salt));
   context.subscriptions.push(workflows);
 
@@ -129,8 +146,8 @@ export async function activate(context: vscode.ExtensionContext) {
     return {
       summary: history.summarize(localDateKey(Date.now(), timeZone), tracker.snapshot(), tracker.pending()),
       enabled, ready: history.ready, refreshing: history.refreshing, historyError: history.error || historyWarning,
-      storageError, idleMinutes, syncConfigured: config !== undefined, account: account.getState(), profileSync: profileSync.getState(),
-      agents: { external: !enabled ? "paused" : settings().get("collectFilesystem", true) ? "tracked" : "off", integrations: agentStatuses }
+      storageError, idleMinutes, syncConfigured: config !== undefined, account: account.getState(), profileSync: profileSync.getState(), trackingMode: tracking.mode,
+      agents: { external: !enabled ? "paused" : tracking.capabilities.external_changes ? "tracked" : "off", labels: tracking.capabilities.agent_activity, integrations: agentStatuses }
     };
   }
   const sidebar = new StatsSidebar(uiState());
@@ -186,11 +203,12 @@ export async function activate(context: vscode.ExtensionContext) {
    * own runtime, so no system Node.js is required). */
   let agentStateWrittenAt = 0;
   async function syncAgentState(install = false): Promise<void> {
-    const integrations = integrationSettings();
-    const any = hookTools.some((tool) => integrations[tool]);
+    // The runtime stays installed while any agent is connected; the hook itself
+    // records only for connections the tracking level currently accepts.
+    const any = hookTools.some((tool) => integrationSettings()[tool]);
     if (!any && !install && !(await inbox.exists())) return;
     try {
-      await inbox.writeState({ stateVersion: 1, collecting: enabled, integrations, excludeFiles: settings().get<string[]>("excludeFiles", []).slice(0, 256), updatedAt: new Date().toISOString() });
+      await inbox.writeState({ stateVersion: 1, collecting: enabled, integrations: agentLabels(), excludeFiles: settings().get<string[]>("excludeFiles", []).slice(0, 256), updatedAt: new Date().toISOString() });
       agentStateWrittenAt = Date.now();
       if (any || install) await agents.installRuntime();
     } catch { log("Agent integration state could not be written; agent hooks will not record until this is fixed."); }
@@ -220,9 +238,10 @@ export async function activate(context: vscode.ExtensionContext) {
   log("Session collector loaded. History contains metadata only; checkpoints run every 15 seconds.");
   if (!config) log("Daemon sync is not configured. Local history and all reports work. To enable CLI summaries, initialize the CLI and reload this window.");
   function coverage() {
-    for (const [capability, setting, fallback] of [["editor", "enabled", true], ["filesystem", "collectFilesystem", true], ["git", "collectGit", true],
-      ["workflows", "collectWorkflows", true], ["diagnostics", "collectDiagnostics", false], ["attribution", "allowAttributionReports", false]] as const) {
-      buffer.emit("collector.coverage", { capability, state: enabled && vscode.workspace.getConfiguration("stackStats").get(setting, fallback) ? "enabled" : "disabled", reason: "settings" });
+    // The v2 protocol's fixed coverage vocabulary; "editor" covers the edit timeline.
+    for (const [kind, id] of [["editor", "activity_timeline"], ["filesystem", "external_changes"], ["git", "git_activity"],
+      ["workflows", "tasks_debugging"], ["diagnostics", "problem_counts"], ["attribution", "extension_reports"]] as const) {
+      buffer.emit("collector.coverage", { capability: kind, state: enabled && tracking.capabilities[id] ? "enabled" : "disabled", reason: "settings" });
     }
   }
   coverage();
@@ -256,26 +275,22 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => { metadata.close(document); collector.close(document.uri.toString()); }));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { metadata.clear(); tracker.breakInterval(); workflows.reset(); git.reset(); }));
+  // Settings that change what is observed. Agent labels, upload policy and display
+  // preferences are deliberately absent: they must not interrupt the human session.
+  const collectionKeys = ["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "rawRetentionDays",
+    ...CAPABILITIES.filter((item) => item.setting && item.id !== "agent_activity").map((item) => item.setting!)];
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
     if (!event.affectsConfiguration("stackStats")) return;
-    if (event.affectsConfiguration("stackStats.agentIntegrations")) {
-      // Opting in/out of agent hooks must not interrupt the human session.
-      void syncAgentState().then(refreshAgents);
-      if (!["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "collectFilesystem", "collectGit", "collectWorkflows",
-        "collectDiagnostics", "allowAttributionReports", "rawRetentionDays", "showStatusBar", "syncHourlyActivity"].some(key => event.affectsConfiguration(`stackStats.${key}`))) return;
-    }
-    if (event.affectsConfiguration("stackStats.syncHourlyActivity")) {
-      // Only upload policy changed; it must not manufacture a session break.
+    const affects = (key: string) => event.affectsConfiguration(`stackStats.${key}`);
+    // Every window receives application-scoped changes, including level changes made in another window.
+    tracking = readTracking();
+    if (affects("agentIntegrations") || affects("collectAgentActivity")) void syncAgentState().then(refreshAgents);
+    if (affects("syncHourlyActivity")) {
+      // Only upload policy changed.
       profileSync.accountChanged();
       void profileSync.tick(true);
-      if (!["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "collectFilesystem", "collectGit", "collectWorkflows", "collectDiagnostics", "allowAttributionReports", "rawRetentionDays", "showStatusBar"]
-        .some(key => event.affectsConfiguration(`stackStats.${key}`))) return;
     }
-    // Display preferences must not interrupt the active-time evidence interval.
-    if (event.affectsConfiguration("stackStats.showStatusBar") && ![
-      "enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames",
-      "collectFilesystem", "collectGit", "collectWorkflows", "collectDiagnostics", "allowAttributionReports", "rawRetentionDays"
-    ].some(key => event.affectsConfiguration(`stackStats.${key}`))) { refresh(); return; }
+    if (!collectionKeys.some(affects)) { refresh(); return; }
     const next = vscode.workspace.getConfiguration("stackStats").get("enabled", true);
     if (enabled && !next) { collector.clear(); tracker.end("paused"); void checkpoint(); }
     enabled = next;
@@ -295,6 +310,21 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
   }
   const show = (text: string) => { output.appendLine(`\n${text}\n`); output.show(true); };
+  const syncStatus = () => { const status = profileSync.getState().status; return status === "not-connected" ? "no-account" as const : status === "disabled" ? "off" as const : "on" as const; };
+
+  // ── Tracking levels: local collection only; sync, publication and connections untouched ──
+  const trackingControls = new TrackingControls({ paused: () => !enabled, log,
+    syncSummary: () => ({ "no-account": "Private sync: off (no account)", off: "Private sync: off", on: "Private sync: on" })[syncStatus()],
+    agents: () => ({ connected: (agentStatuses ?? []).filter((status) => status.enabled).map((status) => status.displayName),
+      available: (agentStatuses ?? []).filter((status) => status.state === "available").map((status) => status.displayName) }) });
+  command("changeTrackingLevel", (level) => trackingControls.changeLevel(level));
+  command("openAdvancedTracking", () => trackingControls.advanced());
+  command("restoreRecommendedTracking", async () => { await trackingControls.applyLevel(RECOMMENDED_LEVEL); });
+  // Sidebar actions and tests; hidden from the Command Palette.
+  command("setTrackingCapability", async (id, on) => {
+    const target = CAPABILITIES.find((item) => item.setting && item.id === id);
+    if (target && typeof on === "boolean") await trackingControls.setCapability(target.id, on);
+  });
   command("showStatus", () => show(`Stack Stats — Status\n\nCollection: ${enabled ? "enabled" : "paused"}\n${delivery.state}\nPending deliveries: ${delivery.pendingCount}\nLocal history: ${store.directory}\nCheckpoint: every 15s\nSession idle timeout: ${idleMinutes}m; active edit gap: at most 60s\n${storageError ? "WARNING: checkpoint failed; recent activity is only in memory." : "Local storage ready."}`));
   command("showCurrentSession", async () => { tracker.expire(Date.now()); refresh(); await sidebar.focus("currentSession"); });
   for (const period of ["Today", "ThisWeek"] as const) command(`show${period}`, async () => {
@@ -360,8 +390,8 @@ export async function activate(context: vscode.ExtensionContext) {
     await checkpoint(); await observer.flush(true); await refreshAgents();
     const now = Date.now();
     const connections = Object.fromEntries((agentStatuses ?? []).map((status) => [status.tool, statusSummary(status, now)])) as Partial<Record<HookTool, string>>;
-    show(formatAgentActivity(await observer.summary(todayRange()), { integrations: integrationSettings(), connections, filesystem: settings().get("collectFilesystem", true),
-      collecting: enabled, now, title: "Agent & external activity today" }));
+    show(formatAgentActivity(await observer.summary(todayRange()), { integrations: integrationSettings(), connections, filesystem: tracking.capabilities.external_changes,
+      labels: tracking.capabilities.agent_activity, collecting: enabled, now, title: "Agent & external activity today" }));
   });
 
   // ── Agent integrations: one click + explicit confirmation ──────────────────────
@@ -392,10 +422,21 @@ export async function activate(context: vscode.ExtensionContext) {
     if (status.state === "not_detected") { void vscode.window.showInformationMessage(`${name} wasn't found on this device. Install ${name}, then connect it here. ${EXTERNAL_CHANGES_MESSAGE}`); return; }
     let preview: ChangePreview;
     try { preview = await agents.previewConnect(tool); } catch (error) { await reportIntegrationError(tool, error, `Couldn't connect ${name}.`); return; }
+    // A level without agent activity ignores every agent. Connecting turns it back on,
+    // and the confirmation says so; the tracking level never connects anything itself.
+    const labels = tracking.capabilities.agent_activity ? undefined : trackingControls.plan("agent_activity", true);
+    const labelsNote = labels && agentLabelsNote(tracking, labels, readSetting);
     if (preview.changed) {
       const prompt = connectPrompt(preview, name);
-      if (await vscode.window.showInformationMessage(prompt.message, { modal: true, detail: prompt.detail }, prompt.confirm) !== prompt.confirm) return;
-    } else if (status.state === "connected") { void vscode.window.showInformationMessage(`${name} is already connected.`); return; }
+      if (await vscode.window.showInformationMessage(prompt.message, { modal: true, detail: labelsNote ? `${prompt.detail}\n\n${labelsNote}` : prompt.detail }, prompt.confirm) !== prompt.confirm) return;
+    } else if (status.state === "connected") {
+      if (!labelsNote) { void vscode.window.showInformationMessage(`${name} is already connected.`); return; }
+      if (await vscode.window.showInformationMessage(`Resume labeling ${name}?`, { modal: true, detail: `${name} is connected, but Stack Stats ignores it at this tracking level. ${labelsNote}` }, "Resume") === "Resume") {
+        await trackingControls.setCapability("agent_activity", true);
+      }
+      return;
+    } else if (labelsNote && await vscode.window.showInformationMessage(`Connect ${name}?`, { modal: true, detail: labelsNote }, "Connect") !== "Connect") return;
+    if (labels && !(await trackingControls.apply(labels.changes))) return;
     try {
       const result = await agents.connect(tool);
       await refreshAgents();
@@ -437,7 +478,12 @@ export async function activate(context: vscode.ExtensionContext) {
   async function manageAgents(): Promise<void> {
     await refreshAgents();
     type Item = vscode.QuickPickItem & { run?: () => unknown };
-    const items: Item[] = [{ label: "$(eye) External changes", description: settings().get("collectFilesystem", true) && enabled ? "Tracked automatically" : "Paused or off", detail: EXTERNAL_CHANGES_MESSAGE }];
+    const items: Item[] = [{ label: "$(eye) External changes", description: !enabled ? "Paused" : tracking.capabilities.external_changes ? "Tracked automatically" : "Off at your tracking level",
+      detail: EXTERNAL_CHANGES_MESSAGE, run: tracking.capabilities.external_changes ? undefined : () => trackingControls.changeLevel() }];
+    if (!tracking.capabilities.agent_activity && (agentStatuses ?? []).some((status) => status.enabled)) {
+      items.push({ label: "$(play) Resume agent labels", description: "Agent activity is off at your tracking level", detail: "Turns agent activity back on. Your connections were never removed.",
+        run: () => trackingControls.setCapability("agent_activity", true) });
+    }
     for (const status of agentStatuses ?? []) {
       const summary = statusSummary(status);
       if (status.state === "not_detected") items.push({ label: `$(circle-slash) ${status.displayName}`, description: summary, detail: `Install ${status.displayName} to connect it.` });
@@ -483,7 +529,14 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.window.showInformationMessage("Connect agents with one click from the Stack Stats Agents view.", "Manage Agent Integrations")
       .then((choice) => { if (choice) void vscode.commands.executeCommand("stackStats.manageAgentIntegrations"); });
   });
-  command("showPrivacy", () => show(`Telemetry privacy\n\nNo source, prompts, command lines, debug configuration, diagnostic messages, commit messages, authors or remote URLs are collected.\nAI/manual attribution requires explicit reports and is never inferred from editor brand.\nExternal changes are tracked automatically with the writer unknown. Connected agents (optional; Connect in the Agents view) add hashed run IDs, tool kinds, durations, salted file IDs and diff-line counts locally; prompts, responses, commands and file contents are never stored. Agent and external-change records are local-only and are not synced.\nExcluded files: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []).length} custom pattern(s) plus built-in exclusions.\nExcluded projects: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []).length} pattern(s).\nTelemetry journal: ${telemetry.journal.directory}\n${telemetry.state}`));
+  command("showPrivacy", async () => {
+    await refreshAgents();
+    const state = account.getState();
+    show(formatPrivacy({ snapshot: tracking, paused: !enabled, excludedFiles: settings().get<string[]>("excludeFiles", []).length, excludedProjects: settings().get<string[]>("excludeProjects", []).length,
+      account: { connected: state.status === "connected", username: state.account?.username }, sync: syncStatus(), hourlySync: settings().get<unknown>("syncHourlyActivity") === true,
+      agents: (agentStatuses ?? []).map((status) => ({ name: status.displayName, connected: status.enabled })), publicSettingsUrl: `${account.getOrigin()}/settings/sync`,
+      storage: [`Local history: ${store.directory}`, `Local activity records: ${telemetry.journal.directory}`, `Optional local daemon: ${config ? telemetry.state : "not set up"}`] }));
+  });
 
   // A single low-frequency timer handles expiry, persistence, delivery and status.
   // HTTP retries run separately so an offline daemon cannot block checkpointing.
@@ -497,7 +550,7 @@ export async function activate(context: vscode.ExtensionContext) {
     void checkpoint().then(() => { void delivery.sync().then(refresh); void profileSync.tick(); refresh(); });
     void telemetry.sync();
     void observer.flush();
-    if (enabled && vscode.workspace.isTrusted && vscode.workspace.getConfiguration("stackStats").get("collectGit", true)) {
+    if (enabled && vscode.workspace.isTrusted && tracking.capabilities.git_activity) {
       void git.poll((vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath), policy);
     }
   }, CHECKPOINT_MS);
@@ -525,6 +578,8 @@ export async function activate(context: vscode.ExtensionContext) {
     apiVersion: "2.0" as const,
     account: { getState: () => account.getState(), onDidChange: account.onDidChange.bind(account) },
     profileSync: { getState: () => profileSync.getState(), onDidChange: profileSync.onDidChange.bind(profileSync) },
+    /** Read only: the current tracking level and what is collected locally. */
+    tracking: { getState: () => ({ mode: tracking.mode, paused: !enabled, capabilities: { ...tracking.capabilities } }) },
     query: async (input: unknown) => {
       const query = telemetryQuerySchema.parse(input);
       await checkpoint(); return queryTelemetry(await telemetry.events(), query);
@@ -554,7 +609,7 @@ export async function activate(context: vscode.ExtensionContext) {
       return { events: page, next: index + query.limit < events.length ? page.at(-1)!.eventId : null };
     },
     reportAttribution: async (data: TelemetryData<"attribution.report">) => {
-      if (!enabled || !vscode.workspace.getConfiguration("stackStats").get("allowAttributionReports", false)) throw new Error("Attribution reports are disabled");
+      if (!enabled || !tracking.capabilities.extension_reports) throw new Error("Attribution reports are disabled");
       const event = telemetryEventSchema.parse({ schemaVersion: "2.0", eventId: randomUUID(), occurredAt: new Date().toISOString(),
         source: { collector: "adapter", instanceId: buffer.instanceId, installationId }, context: {}, evidence: "reported", eventType: "attribution.report", data });
       if (event.eventType !== "attribution.report") throw new Error("Expected attribution report");

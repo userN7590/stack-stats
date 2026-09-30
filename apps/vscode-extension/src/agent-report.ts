@@ -13,6 +13,8 @@ export interface AgentReportContext {
   /** Connection status derived from the tools' real configuration, when available. */
   connections?: Partial<Record<"claude-code" | "codex", string>>;
   filesystem: boolean; collecting: boolean; now: number; title?: string;
+  /** The tracking level's agent capability; off pauses labels without disconnecting. */
+  labels?: boolean;
 }
 
 /** Plain-text local inspection. Categories are listed side by side with their own
@@ -23,7 +25,8 @@ export function formatAgentActivity(summary: AgentActivitySummary, context: Agen
   const out: string[] = [`Stack Stats — ${context.title ?? "Agent & external activity"} (local only, never uploaded)`, "",
     "External changes are tracked automatically. Connect an agent to label them. Human coding time is separate: agent runs and external changes never add to it.", ""];
   out.push("Sources");
-  out.push(`  External change observation: ${!context.collecting ? "paused" : context.filesystem ? "on, automatic (workspace watcher + open-document reloads)" : "off (stackStats.collectFilesystem)"}`);
+  out.push(`  External change observation: ${!context.collecting ? "paused" : context.filesystem ? "on, automatic (workspace watcher + open-document reloads)" : "off at your tracking level (Stack Stats: Change Tracking Level)"}`);
+  if (context.labels === false) out.push("  Agent labels: paused at your tracking level. Connected agents stay connected; their activity is ignored until agent activity is back on.");
   for (const tool of ["claude-code", "codex"] as const) {
     const entry = byTool.get(tool);
     const connection = context.connections?.[tool];

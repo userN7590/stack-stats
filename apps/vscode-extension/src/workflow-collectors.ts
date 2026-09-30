@@ -4,6 +4,7 @@ import type { PrivacyPolicy } from "@stack-stats/core";
 import type { TelemetryContext, TelemetryData } from "@stack-stats/protocol";
 import type { DocumentMetadata } from "./metadata.js";
 import { eventContext, type TelemetryBuffer } from "./telemetry-buffer.js";
+import type { TrackingCapabilities } from "./tracking-levels.js";
 
 export class WorkflowCollectors {
   private readonly disposables: vscode.Disposable[] = [];
@@ -18,13 +19,15 @@ export class WorkflowCollectors {
 
   constructor(private readonly buffer: TelemetryBuffer, private readonly metadata: DocumentMetadata,
     private readonly hash: (value: string) => string, private readonly policy: () => PrivacyPolicy,
-    private readonly enabled: () => boolean, private readonly onFilesystem?: (uri: vscode.Uri, operation: "created" | "changed" | "deleted") => void) {
+    private readonly enabled: () => boolean, private readonly capabilities: () => TrackingCapabilities,
+    private readonly onFilesystem?: (uri: vscode.Uri, operation: "created" | "changed" | "deleted") => void) {
     const on = (disposable: vscode.Disposable) => this.disposables.push(disposable);
     on(vscode.workspace.onWillSaveTextDocument((event) => this.saves.set(event.document.uri.toString(),
       event.reason === vscode.TextDocumentSaveReason.Manual ? "manual" : event.reason === vscode.TextDocumentSaveReason.AfterDelay ? "after_delay" : "focus_out")));
     on(vscode.workspace.onDidSaveTextDocument((document) => {
       const key = document.uri.toString(), context = this.context(document.uri, document.languageId);
-      if (context) { this.buffer.emit("file.saved", { reason: this.saves.get(key) ?? "unknown", version: document.version }, context); this.writes.set(key, Date.now()); }
+      // Saves always correlate filesystem notifications; the event itself is editor workflow.
+      if (context) { if (this.capabilities().editor_events) this.buffer.emit("file.saved", { reason: this.saves.get(key) ?? "unknown", version: document.version }, context); this.writes.set(key, Date.now()); }
       this.saves.delete(key);
     }));
     on(vscode.workspace.onDidCloseTextDocument((document) => this.saves.delete(document.uri.toString())));
@@ -34,7 +37,7 @@ export class WorkflowCollectors {
       for (const file of event.files) {
         const before = this.context(file.oldUri), after = this.context(file.newUri);
         // A rename crossing an exclusion boundary must not expose the excluded ID.
-        if (before && after) this.buffer.emit("file.lifecycle", { operation: "renamed", previousFileId: before.fileId }, after);
+        if (before && after && this.capabilities().editor_events) this.buffer.emit("file.lifecycle", { operation: "renamed", previousFileId: before.fileId }, after);
         if (before) this.writes.set(file.oldUri.toString(), Date.now());
         if (after) this.writes.set(file.newUri.toString(), Date.now());
       }
@@ -46,7 +49,7 @@ export class WorkflowCollectors {
     }));
     on(vscode.window.onDidChangeWindowState((state) => {
       const context = vscode.window.activeTextEditor ? this.context(vscode.window.activeTextEditor.document.uri, vscode.window.activeTextEditor.document.languageId) : undefined;
-      if (context) this.buffer.emit("window.focus", { focused: state.focused }, context);
+      if (context && this.capabilities().editor_events) this.buffer.emit("window.focus", { focused: state.focused }, context);
     }));
     const watcher = vscode.workspace.createFileSystemWatcher("**/*");
     on(watcher);
@@ -56,13 +59,13 @@ export class WorkflowCollectors {
     on(watcher.onDidChange((uri) => { this.onFilesystem?.(uri, "changed"); this.filesystem(uri, "changed"); }));
     on(watcher.onDidDelete((uri) => { this.onFilesystem?.(uri, "deleted"); this.filesystem(uri, "deleted"); }));
     on(vscode.languages.onDidChangeDiagnostics((event) => {
-      if (!this.enabled() || !this.setting("collectDiagnostics", false)) return;
+      if (!this.enabled() || !this.capabilities().problem_counts) return;
       for (const uri of event.uris) {
         if (this.diagnostics.size < 500) this.diagnostics.set(uri.toString(), uri); else this.overflow++;
       }
     }));
     on(vscode.tasks.onDidStartTask((event) => {
-      if (!this.enabled() || !this.setting("collectWorkflows", true)) return;
+      if (!this.enabled() || !this.capabilities().tasks_debugging) return;
       const scope = event.execution.task.scope;
       const context = this.workspaceContext(typeof scope === "object" ? scope.uri : undefined);
       if (!context) return;
@@ -82,7 +85,7 @@ export class WorkflowCollectors {
       if (run && this.enabled() && this.allowedContext(run.context)) this.buffer.emit("task.lifecycle", { executionId: run.id, group: run.group, state: "ended" }, run.context);
     }));
     on(vscode.debug.onDidStartDebugSession((session) => {
-      if (!this.enabled() || !this.setting("collectWorkflows", true)) return;
+      if (!this.enabled() || !this.capabilities().tasks_debugging) return;
       const context = this.workspaceContext(session.workspaceFolder?.uri);
       if (!context) return;
       const run = { id: randomUUID(), type: this.hash(session.type), context };
@@ -96,7 +99,6 @@ export class WorkflowCollectors {
     this.switch(vscode.window.activeTextEditor?.document);
   }
 
-  private setting(key: string, fallback: boolean) { return vscode.workspace.getConfiguration("stackStats").get(key, fallback); }
   private context(uri: vscode.Uri, language?: string): TelemetryContext | undefined {
     if (!this.enabled()) return;
     const context = this.metadata.fromUri(uri, language);
@@ -113,15 +115,15 @@ export class WorkflowCollectors {
   }
   private lifecycle(uri: vscode.Uri, operation: "created" | "deleted") {
     const context = this.context(uri);
-    if (context) { this.buffer.emit("file.lifecycle", { operation }, context); this.writes.set(uri.toString(), Date.now()); }
+    if (context) { if (this.capabilities().editor_events) this.buffer.emit("file.lifecycle", { operation }, context); this.writes.set(uri.toString(), Date.now()); }
   }
   private switch(document?: vscode.TextDocument) {
     const context = document ? this.context(document.uri, document.languageId) : undefined;
-    if (context && this.previous && JSON.stringify(context) !== JSON.stringify(this.previous)) this.buffer.emit("context.switched", { from: this.previous, to: context }, context);
+    if (context && this.previous && this.capabilities().editor_events && JSON.stringify(context) !== JSON.stringify(this.previous)) this.buffer.emit("context.switched", { from: this.previous, to: context }, context);
     this.previous = context;
   }
   private filesystem(uri: vscode.Uri, operation: "created" | "changed" | "deleted") {
-    if (!this.enabled() || !this.setting("collectFilesystem", true) || !this.metadata.fromUri(uri)) return;
+    if (!this.enabled() || !this.capabilities().external_changes || !this.metadata.fromUri(uri)) return;
     const key = `${uri.toString()}:${operation}`, previous = this.fsPending.get(key);
     if (!previous && this.fsPending.size >= 1000) { this.overflow++; return; }
     this.fsPending.set(key, { uri, operation, count: (previous?.count ?? 0) + 1, at: Date.now() });
@@ -130,13 +132,13 @@ export class WorkflowCollectors {
     if (!this.enabled()) { this.reset(); return; }
     for (const observation of this.fsPending.values()) {
       const context = this.context(observation.uri);
-      if (context && this.setting("collectFilesystem", true)) this.buffer.sample("filesystem.changed", { operation: observation.operation,
+      if (context && this.capabilities().external_changes) this.buffer.sample("filesystem.changed", { operation: observation.operation,
         notifications: observation.count, origin: Math.abs(observation.at - (this.writes.get(observation.uri.toString()) ?? 0)) < 2000 ? "editor_correlated" : "unknown" }, context, "filesystem", "inferred", observation.at);
     }
     this.fsPending.clear();
     for (const uri of this.diagnostics.values()) {
       const context = this.context(uri);
-      if (!context || !this.setting("collectDiagnostics", false)) continue;
+      if (!context || !this.capabilities().problem_counts) continue;
       const counts = { errors: 0, warnings: 0, information: 0, hints: 0 };
       for (const diagnostic of vscode.languages.getDiagnostics(uri)) {
         if (diagnostic.severity === vscode.DiagnosticSeverity.Error) counts.errors++;

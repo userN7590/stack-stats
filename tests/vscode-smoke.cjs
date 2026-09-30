@@ -10,6 +10,7 @@ async function run() {
   assert(extension, "Extension discovered");
   await extension.activate();
   assert(extension.isActive, "Extension activated");
+  assert.equal(extension.exports.tracking.getState().mode, "moderate", "A clean profile starts at the recommended tracking level");
   const observations = [];
   const observer = vscode.workspace.onDidChangeTextDocument((event) => observations.push({
     at: Date.now(), dirty: event.document.isDirty, changes: event.contentChanges.length,
@@ -149,6 +150,46 @@ async function run() {
   await agentEditor.edit((builder) => builder.insert(new vscode.Position(0, 0), "// human follow-up\n"));
   await vscode.commands.executeCommand("stackStats.showToday");
   assert.equal(countEdits(await latest()), countEdits(afterAgent) + 1, "A human edit after agent work counts normally");
+  // Phase 9F: a level changes future local collection only. Coding activity keeps
+  // working at every level and existing history is never removed.
+  const setLevel = async (mode, ...command) => {
+    await vscode.commands.executeCommand(...command);
+    for (let i = 0; i < 40 && api.tracking.getState().mode !== mode; i++) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(api.tracking.getState().mode, mode, `Tracking level is ${mode}`);
+  };
+  const hourlyEdits = async () => (await Promise.all((await readdir(hourlyDirectory)).filter((file) => /^\d{4}-\d{2}-\d{2}\.json$/.test(file))
+    .map(async (file) => JSON.parse(await readFile(join(hourlyDirectory, file), "utf8"))))).reduce((sum, day) => sum + day.editCountByHour.reduce((a, b) => a + b, 0), 0);
+  const humanEdit = async (text) => {
+    await focus();
+    await agentEditor.edit((builder) => builder.insert(new vscode.Position(0, 0), text));
+    await vscode.commands.executeCommand("stackStats.showToday");
+  };
+  const sessionsBefore = (await snapshots()).length;
+  await setLevel("minimal", "stackStats.changeTrackingLevel", "minimal");
+  const timelineAtMinimal = (await api.query(range)).edits.editCount, hourlyAtMinimal = await hourlyEdits();
+  const editsAtMinimal = countEdits(await latest());
+  await humanEdit("// minimal\n");
+  assert.equal(countEdits(await latest()), editsAtMinimal + 1, "Minimal still records coding activity");
+  assert.equal((await api.query(range)).edits.editCount, timelineAtMinimal, "Minimal records no activity timeline");
+  assert.equal(await hourlyEdits(), hourlyAtMinimal, "Minimal adds nothing to hourly patterns");
+  const externalAtMinimal = (await api.agentActivity(range)).external.unknown.events;
+  await writeFile(join(root, "workspace", "minimal-external.ts"), "export const minimal = true;\n");
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert.equal((await api.agentActivity(range)).external.unknown.events, externalAtMinimal, "Minimal records no external changes");
+  await setLevel("moderate", "stackStats.changeTrackingLevel", "moderate");
+  await writeFile(join(root, "workspace", "moderate-external.ts"), "export const moderate = true;\n");
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert((await api.agentActivity(range)).external.unknown.events > externalAtMinimal, "Moderate tracks external changes again");
+  await humanEdit("// moderate\n");
+  assert.equal((await api.query(range)).edits.editCount, timelineAtMinimal + 1, "Moderate records the activity timeline again");
+  await setLevel("extensive", "stackStats.changeTrackingLevel", "extensive");
+  const agentSettings = vscode.workspace.getConfiguration("stackStats");
+  assert.deepEqual([agentSettings.get("agentIntegrations.claudeCode"), agentSettings.get("agentIntegrations.codex")], [false, false], "Extensive never connects an agent");
+  await setLevel("custom", "stackStats.setTrackingCapability", "activity_timeline", false);
+  await setLevel("moderate", "stackStats.restoreRecommendedTracking");
+  await humanEdit("// restored\n");
+  assert.equal(countEdits(await latest()), editsAtMinimal + 3, "Stats stay coherent across level changes");
+  assert((await snapshots()).length >= sessionsBefore, "Changing levels never removes history");
   await agentEditor.document.save();
   await vscode.window.showTextDocument(excluded);
   await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");

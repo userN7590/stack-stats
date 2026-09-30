@@ -3,6 +3,7 @@ import type { SidebarSummary } from "./stats-model.js";
 import { formatAgo, formatDuration } from "./presentation.js";
 import type { ProfileSyncState } from "./profile-sync.js";
 import type { AccountState } from "./account-service.js";
+import { RECOMMENDED_LEVEL, modeLabel, type TrackingMode } from "./tracking-levels.js";
 
 export const sidebarViews = ["currentSession", "today", "thisWeek", "languages", "projects", "streak", "trackingStatus"] as const;
 export type SidebarView = typeof sidebarViews[number];
@@ -18,6 +19,8 @@ export interface SidebarState {
   account?: AccountState;
   profileSync?: ProfileSyncState;
   agents?: AgentsPanelState;
+  /** Derived from the capability settings; never stored. */
+  trackingMode?: TrackingMode;
 }
 /** Normalized integration status for the Agents panel; vendor config never reaches the UI. */
 export interface AgentIntegrationView {
@@ -30,8 +33,10 @@ export interface AgentIntegrationView {
   problem?: string;
 }
 export interface AgentsPanelState {
-  /** Zero-config external-change observation (tracking + stackStats.collectFilesystem). */
+  /** Zero-config external-change observation (tracking on + the External file changes capability). */
   external: "tracked" | "paused" | "off";
+  /** The tracking level's agent capability. Off ignores connected agents without disconnecting them. */
+  labels?: boolean;
   /** Undefined while the first status check runs. */
   integrations?: AgentIntegrationView[];
 }
@@ -136,7 +141,7 @@ export function statusBarPresentation(state: SidebarState) {
   const duration = state.summary.current?.activeMs ?? 0;
   return {
     text: !state.enabled ? "$(debug-pause) Stack Stats • Paused" : state.storageError ? "$(warning) Stack Stats • Storage error" : `$(pulse) Stack Stats • ${state.summary.current ? formatDuration(duration) : "Idle"}`,
-    tooltip: `${!state.enabled ? "Tracking is paused." : state.summary.current ? `Current session: ${formatDuration(duration)} estimated active coding time.` : "Ready to track automatically when you edit."}\n${state.storageError ? "Local storage needs attention; recent activity may only be in memory.\n" : ""}Open the Stack Stats sidebar.`,
+    tooltip: `${!state.enabled ? "Tracking is paused." : state.summary.current ? `Current session: ${formatDuration(duration)} estimated active coding time.` : "Ready to track automatically when you edit."}\n${state.trackingMode ? `Tracking level: ${modeLabel(state.trackingMode)}.\n` : ""}${state.storageError ? "Local storage needs attention; recent activity may only be in memory.\n" : ""}Open the Stack Stats sidebar.`,
     warning: state.storageError
   };
 }
@@ -229,8 +234,8 @@ function connectionRows(state: SidebarState): StatsRow[] {
   return [accountRow,
     // A disconnected first-time user needs one invitation, not two competing ones.
     ...(account.status !== "disconnected" || sync.pendingDays > 0 || sync.lastSyncedAt !== undefined ? [syncRow] : []),
-    { ...row("local", "On this device", state.storageError || state.historyError ? "Needs attention" : !state.enabled ? "Paused" : "Tracking locally", "Your activity stays available offline. Expand for tracking controls and troubleshooting.", state.storageError || state.historyError ? "warning" : "shield"),
-      children: [status.find(item => item.id === "toggle")!, status.find(item => item.id === "settings")!,
+    { ...row("local", "On this device", state.storageError || state.historyError ? "Needs attention" : !state.enabled ? "Paused" : state.trackingMode ? `${modeLabel(state.trackingMode)} tracking` : "Tracking locally", "Your activity stays available offline. Expand for tracking controls and troubleshooting.", state.storageError || state.historyError ? "warning" : "shield"),
+      children: [...(state.trackingMode ? [trackingLevelRow(state.trackingMode, state.enabled)] : []), status.find(item => item.id === "toggle")!, status.find(item => item.id === "settings")!,
         { ...row("diagnostics", "Troubleshooting", undefined, "Storage, history, idle timeout and optional local daemon details.", "tools"),
           children: [...status.filter(item => ["tracking", "storage", "history", "timeout", "sync"].includes(item.id)),
             { id: "status", label: "Open diagnostic report", command: "stackStats.showStatus", icon: "output" },
@@ -240,6 +245,12 @@ function connectionRows(state: SidebarState): StatsRow[] {
   ];
 }
 
+/** The one entry point for "how much would you like Stack Stats to track?". */
+export function trackingLevelRow(mode: TrackingMode, enabled = true): StatsRow {
+  return { id: "trackingLevel", label: "Tracking level", description: `${modeLabel(mode)}${mode === RECOMMENDED_LEVEL ? " (recommended)" : ""}`, icon: "settings", command: "stackStats.changeTrackingLevel",
+    tooltip: `How much Stack Stats observes on this device: Minimal, Moderate or Extensive${mode === "custom" ? ", or your own Custom selection" : ""}. Private sync and your public profile are separate choices.${enabled ? "" : " Tracking is paused, so nothing is collected until you resume."}` };
+}
+
 export const EXTERNAL_CHANGES_MESSAGE = "External changes are tracked automatically. Connect an agent to label them.";
 
 /** Agent integrations are optional: external changes are observed with no setup, and
@@ -247,9 +258,12 @@ export const EXTERNAL_CHANGES_MESSAGE = "External changes are tracked automatica
  * apply; no vendor or hook vocabulary is shown. */
 export function agentRows(state: SidebarState, now = Date.now()): StatsRow[] {
   const agents = state.agents ?? { external: state.enabled ? "tracked" : "paused" };
-  const externalLabels = { tracked: "Tracked automatically", paused: "Paused", off: "Off in settings" };
-  const rows: StatsRow[] = [row("external", "External changes", externalLabels[agents.external],
-    `${EXTERNAL_CHANGES_MESSAGE} Changes made outside the editor, by agents, scripts or checkouts, are recorded on this device with the writer unknown and never count as coding time.`, "eye")];
+  const labels = agents.labels !== false;
+  const externalLabels = { tracked: "Tracked automatically", paused: "Paused", off: "Off at your tracking level" };
+  const rows: StatsRow[] = [{ ...row("external", "External changes", externalLabels[agents.external],
+    agents.external === "off" ? "External file changes are off at your tracking level. Choose Moderate or Extensive, or turn them on in Advanced settings."
+      : `${EXTERNAL_CHANGES_MESSAGE} Changes made outside the editor, by agents, scripts or checkouts, are recorded on this device with the writer unknown and never count as coding time.`, "eye"),
+    ...(agents.external === "off" ? { command: "stackStats.changeTrackingLevel" } : {}) }];
   if (!agents.integrations) return [...rows, row("checking", "Checking for agents…", undefined, undefined, "loading~spin")];
   for (const agent of agents.integrations) {
     const action = (id: string, label: string, command: string, icon: string): StatsRow => ({ id, label, command, arguments: [agent.tool], icon });
@@ -259,11 +273,19 @@ export function agentRows(state: SidebarState, now = Date.now()): StatsRow[] {
         rows.push(row(agent.tool, agent.displayName, "Not detected", `${agent.displayName} wasn't found on this device. External changes are still tracked.`, "circle-slash"));
         break;
       case "available":
-        rows.push({ ...row(agent.tool, agent.displayName, "Not connected", `Optional. Connect to label ${agent.displayName}'s changes and runs. Stack Stats asks before changing anything.`, "plug"),
+        rows.push({ ...row(agent.tool, agent.displayName, "Not connected", `Optional. Connect to label ${agent.displayName}'s changes and runs. Stack Stats asks before changing anything.${labels ? "" : " Agent activity is off at your tracking level; connecting turns it back on."}`, "plug"),
           expanded: true, children: [action("connect", `Connect ${agent.displayName}`, "stackStats.connectAgent", "plug")] });
         break;
       case "connected": {
         const activity = agent.lastSignalAt !== undefined ? formatAgo(agent.lastSignalAt, now) : "No activity received yet";
+        if (!labels) {
+          // Paused by the tracking level: the hook stays installed and exits without recording.
+          rows.push({ ...row(agent.tool, agent.displayName, "Connected · paused", `Your tracking level doesn't include agent activity, so Stack Stats ignores ${agent.displayName}'s hook. It stays installed; resume labels or Disconnect to remove it.`, "debug-pause"),
+            expanded: true, children: [row("activity", "Last activity", activity, "Time of the latest signal from this agent.", "pulse"),
+              { id: "resume", label: "Resume agent labels", command: "stackStats.setTrackingCapability", arguments: ["agent_activity", true], icon: "play",
+                tooltip: "Turns Agent activity back on (with External file changes, which it needs). Your tracking level may become Custom." }, disconnect] });
+          break;
+        }
         rows.push({ ...row(agent.tool, agent.displayName, agent.approvalPending ? `Approve in ${agent.displayName}` : agent.verified ? `Connected · ${activity}` : "Connected",
           agent.approvalPending ? `${agent.displayName} runs new hooks only after you approve them.` : `Stack Stats labels ${agent.displayName}'s changes and runs on this device.`, agent.approvalPending ? "info" : "pass"),
           expanded: true, children: [
@@ -292,5 +314,6 @@ export function agentsDescription(agents?: AgentsPanelState): string {
   if (list.some((agent) => agent.state === "needs_attention" || agent.state === "error")) return "Needs attention";
   if (list.some((agent) => agent.approvalPending)) return "Approval needed";
   const connected = list.filter((agent) => agent.state === "connected").length;
+  if (connected && agents?.labels === false) return "Paused";
   return connected ? `${connected} connected` : "Optional";
 }

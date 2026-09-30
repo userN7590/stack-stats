@@ -10,7 +10,9 @@ const executable = process.env.VSCODE_EXECUTABLE ?? (process.platform === "darwi
 const root = await mkdtemp(join(tmpdir(), "stack-stats-vscode-"));
 await mkdir(join(root, "workspace"));
 await writeFile(join(root, "workspace", "sample.ts"), "");
-const env = { ...process.env, STACK_STATS_SMOKE_DIR: root, STACK_STATS_HOME: join(root, "daemon") };
+// Agent configuration is isolated too: the extension never reads or writes the
+// developer's real Claude Code or Codex settings during a smoke run.
+const env = { ...process.env, STACK_STATS_SMOKE_DIR: root, STACK_STATS_HOME: join(root, "daemon"), CLAUDE_CONFIG_DIR: join(root, "claude"), CODEX_HOME: join(root, "codex") };
 delete env.ELECTRON_RUN_AS_NODE;
 const args = [
   "--new-window", "--disable-extensions", "--skip-welcome", "--skip-release-notes", "--disable-workspace-trust",
@@ -23,7 +25,7 @@ const args = [
 const macBundle = process.platform === "darwin" && executable.includes(".app/") ? executable.split(".app/")[0] + ".app" : undefined;
 const child = macBundle ? spawn("/usr/bin/open", [
   "-n", "-W", "-a", macBundle, "--env", `STACK_STATS_SMOKE_DIR=${root}`,
-  "--env", `STACK_STATS_HOME=${env.STACK_STATS_HOME}`, "--args", ...args
+  "--env", `STACK_STATS_HOME=${env.STACK_STATS_HOME}`, "--env", `CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR}`, "--env", `CODEX_HOME=${env.CODEX_HOME}`, "--args", ...args
 ], { env, stdio: "inherit" }) : spawn(executable, args, { env, stdio: "inherit" });
 const timeout = setTimeout(() => child.kill(), 90_000);
 child.on("error", (error) => { console.error(error.message); process.exitCode = 1; });

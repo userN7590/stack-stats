@@ -7,13 +7,38 @@ Your coding activity, on your device. Stack Stats starts tracking automatically 
 Select the **Stack Stats** icon in the Activity Bar. There are now two native panels:
 
 - **Activity** puts Today first, with coding time and a compact set of line, file, edit, and session counts. Current session, This week, Languages, Projects, and Coding streak expand for detail. Today opens by default; the other groups stay collapsed until you need them. Weekly details include longest session, active days, and average active time. Language labels use familiar names such as TypeScript, with all recorded languages and projects still accessible.
-- **Account** starts collapsed and shows a single optional connection action. When connected, expand your account for Open Profile/Disconnect, and Profile sync for pending days, last success, consent and privacy controls. **On this device → Troubleshooting** holds storage/history health, idle timeout, and daemon details. Errors are surfaced with short labels and explanatory tooltips.
+- **Account** starts collapsed and shows a single optional connection action. When connected, expand your account for Open Profile/Disconnect, and Profile sync for pending days, last success, consent and privacy controls. **On this device** shows your tracking level. **On this device → Troubleshooting** holds storage/history health, idle timeout, and daemon details. Errors are surfaced with short labels and explanatory tooltips.
 
 Refresh and pause/resume are in the Activity toolbar. Settings and diagnostic reports are in its **…** menu. All existing Command Palette commands and old view-focus keybindings continue to work; Show Today/This Week/Current Session now expand and focus their group in Activity. No data, collection settings, sync consent or credentials are migrated or changed by this layout update.
 
 The status bar shows the current session's estimated active time. Click it to open Current Session. Hiding the status bar does not pause tracking.
 
 Views update automatically as you edit, at most once per second. Idle time does not make the counter tick upward. Historical snapshots load on startup, when returning to the VS Code window, or when refreshing. Other windows' changes appear after their next checkpoint and a history refresh. Everything works offline.
+
+## How much Stack Stats tracks
+
+Run **Stack Stats: Change Tracking Level**. It is also in the Activity view's **…** menu and at **Account → On this device → Tracking level**.
+
+| Level | What it tracks |
+| --- | --- |
+| **Minimal** | Tracks coding time, sessions, streaks, languages, projects, lines and files. Nothing else. |
+| **Moderate — Recommended** (default) | Everything in Minimal, plus hourly patterns, editor workflow, tasks and debugging, external file changes, Git activity and labels from agents you connect. |
+| **Extensive** | Everything in Moderate, plus problem counts and reports from other extensions. Connecting AI tools stays your choice. |
+
+You can change the level anytime. It only affects what is collected on this device from now on, and your existing history is kept.
+
+Cloud sync and your public profile are controlled separately. Choosing a level never:
+
+- turns on sync;
+- publishes anything;
+- connects Claude Code or Codex.
+
+At a level without agent activity, a connected agent stays connected, but Stack Stats ignores it until you turn agent activity back on.
+
+- **Pause Tracking** is separate: it collects nothing at any level.
+- **Advanced settings…** lets you choose each capability. Anything that isn't one of the three levels shows as **Custom**.
+- **Restore Recommended Tracking** returns to Moderate.
+- **Show Telemetry Privacy** lists what is collected locally, what is synced privately and what is public, each on its own.
 
 ## Commands
 
@@ -29,7 +54,10 @@ Use the Command Palette:
 | Stack Stats: Open Dashboard | Open https://stackstats.dev in your browser; no data is uploaded |
 | Stack Stats: Open Settings | Open Stack Stats preferences |
 | Stack Stats: Show Status | Inspect storage location and optional daemon delivery in the output channel |
-| Stack Stats: Show Telemetry Privacy | Inspect collection controls and limitations |
+| Stack Stats: Change Tracking Level | Choose Minimal, Moderate (recommended) or Extensive |
+| Stack Stats: Open Advanced Tracking Settings | Turn individual tracking capabilities on or off |
+| Stack Stats: Restore Recommended Tracking | Return to Moderate; sync, publication and agent connections are untouched |
+| Stack Stats: Show Telemetry Privacy | Your tracking level, local collection, private sync and public profile, each stated separately |
 | Stack Stats: Show Agent Activity | See agent runs and changes made outside the editor (local only) |
 | Stack Stats: Manage Agent Integrations | Connect or disconnect Claude Code / Codex with one click (optional) |
 | Stack Stats: Disconnect All Agent Integrations | Remove Stack Stats hooks from agent settings; run it before uninstalling |
@@ -48,19 +76,39 @@ VS Code SecretStorage holds access/refresh credentials, their expiry times, user
 
 ## Preferences
 
-Open Settings and search **Stack Stats**.
+Most people only need **Change Tracking Level**. Open Settings and search **Stack Stats** for the rest. Settings are grouped into:
+
+- **Tracking**
+- **Privacy and storage**
+- **Agents**
+- **Profile sync**
+- **Display**
+
+**Tracking.** The level is read from these settings. Each one is stored on this device.
+
+| Setting | Default (Moderate) | Tracks |
+| --- | --- | --- |
+| `stackStats.enabled` | `true` | Everything; Pause Tracking turns it off. Not part of the level |
+| `stackStats.collectActivityTimeline` | `true` | Hourly activity patterns: when you code, plus characters and undo/redo |
+| `stackStats.collectEditorEvents` | `true` | Editor workflow: saves, file switches, window focus, file create/rename/delete |
+| `stackStats.collectWorkflows` | `true` | Tasks and debugging |
+| `stackStats.collectDiagnostics` | `false` | Problem counts |
+| `stackStats.collectFilesystem` | `true` | External file changes |
+| `stackStats.collectGit` | `true` | Git activity |
+| `stackStats.collectAgentActivity` | `true` | Agent activity: labels from agents you connect; needs external file changes |
+| `stackStats.allowAttributionReports` | `false` | Reports from other extensions; needs hourly activity patterns |
+
+**Other settings:**
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `stackStats.enabled` | `true` | Automatically track eligible edits; pause retains history |
-| `stackStats.showStatusBar` | `true` | Show the tracking status bar item |
-| `stackStats.inactivityTimeoutMinutes` | `5` | Session grouping timeout, 1–60 minutes; applies immediately |
 | `stackStats.includeProjectNames` | `false` | Opt into project names in future records; otherwise use private project labels |
 | `stackStats.excludeFiles` / `excludeProjects` | `[]` | Additional exclusions using `*`, `**`, and `?` globs |
-| `stackStats.collectFilesystem` / `collectGit` / `collectWorkflows` | `true` | Optional metadata collectors |
-| `stackStats.collectDiagnostics` / `allowAttributionReports` | `false` | Opt into diagnostic counts / explicit provenance reports |
 | `stackStats.rawRetentionDays` | `30` | Retention of acknowledged local raw batches and local agent/external records; `0` retains indefinitely |
 | `stackStats.agentIntegrations.claudeCode` / `codex` | `false` | Managed by **Connect / Disconnect** in the Agents panel; turning one off pauses labeling without removing the hook |
+| `stackStats.syncHourlyActivity` | `false` | Include hourly patterns in private profile sync; publishing stays separate |
+| `stackStats.showStatusBar` | `true` | Show the tracking status bar item |
+| `stackStats.inactivityTimeoutMinutes` | `5` | Session grouping timeout, 1–60 minutes; applies immediately |
 
 Changing the inactivity timeout does not change active-time estimation: only gaps of at most 60 seconds between eligible edits earn time. Reducing the timeout can close an already-idle session; recorded history is not recalculated.
 
