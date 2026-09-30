@@ -37,6 +37,10 @@ exports.run = async () => {
     const settings = vscode.workspace.getConfiguration("stackStats");
     assert.equal(settings.get("showStatusBar"), true);
     assert.equal(settings.get("inactivityTimeoutMinutes"), 5);
+    assert.equal(settings.get("syncHourlyActivity"), false, "Hourly uploads require an explicit setting");
+    await settings.update("syncHourlyActivity", true, vscode.ConfigurationTarget.Global);
+    assert.equal(api.profileSync.getState().status, "not-connected", "Hourly opt-in alone cannot authorize uploads");
+    await settings.update("syncHourlyActivity", false, vscode.ConfigurationTarget.Global);
     await settings.update("showStatusBar", false, vscode.ConfigurationTarget.Global);
     assert.equal(vscode.workspace.getConfiguration("stackStats").get("enabled"), true, "Hiding UI does not pause tracking");
     await settings.update("showStatusBar", true, vscode.ConfigurationTarget.Global);

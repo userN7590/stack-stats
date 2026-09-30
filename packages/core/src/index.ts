@@ -56,3 +56,4 @@ export function aggregateActivity(events: EditorFileChangedEvent[]): ActivitySum
   };
 }
 export * from "./sync.js";
+export * from "./sync-v2.js";

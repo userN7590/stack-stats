@@ -14,6 +14,7 @@ import { StatsSidebar } from "./sidebar.js";
 import type { SidebarState } from "./sidebar-model.js";
 import { TelemetryBuffer } from "./telemetry-buffer.js";
 import { TelemetryJournal, TelemetryPersistence } from "./telemetry-journal.js";
+import { HourlyAggregateStore } from "./hourly-aggregates.js";
 import { WorkflowCollectors } from "./workflow-collectors.js";
 import { GitObserver } from "./git-observer.js";
 import { ProfileSyncService, stableInstallation, stableSyncSalt } from "./profile-sync.js";
@@ -50,7 +51,8 @@ export async function activate(context: vscode.ExtensionContext) {
   await context.globalState.update("privacySalt", salt);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const buffer = new TelemetryBuffer(installationId);
-  const telemetry = new TelemetryPersistence(new TelemetryJournal(join(context.globalStorageUri.fsPath, "telemetry-v2"), log), buffer, config);
+  const hourly = new HourlyAggregateStore(join(context.globalStorageUri.fsPath, "hourly-v1"), installationId);
+  const telemetry = new TelemetryPersistence(new TelemetryJournal(join(context.globalStorageUri.fsPath, "telemetry-v2"), log, hourly), buffer, config);
   const readPolicy = () => new PrivacyPolicy(vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []), vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []));
   let policy: PrivacyPolicy;
   let idleMinutes = inactivityMinutes(vscode.workspace.getConfiguration("stackStats").get("inactivityTimeoutMinutes"));
@@ -71,7 +73,9 @@ export async function activate(context: vscode.ExtensionContext) {
     installationId, projectSalt: syncSalt ?? "", account, sessions: () => {
       if (!syncSalt || !syncIdentityReady) return Promise.reject(new Error("Sync privacy salt unavailable"));
       return store.list(true);
-    }, today: () => localDateKey(Date.now(), timeZone) });
+    }, today: () => localDateKey(Date.now(), timeZone),
+    hourlyAllowed: () => vscode.workspace.getConfiguration("stackStats").get("syncHourlyActivity", false),
+    hourlyDays: () => vscode.workspace.getConfiguration("stackStats").get("syncHourlyActivity", false) ? telemetry.hourlyDays() : Promise.resolve(new Map()) });
   context.subscriptions.push(profileSync);
   const history = new SessionSummaryCache();
   const delivery = new SessionDelivery(store, config);
@@ -187,6 +191,13 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { metadata.clear(); tracker.breakInterval(); workflows.reset(); git.reset(); }));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
     if (!event.affectsConfiguration("stackStats")) return;
+    if (event.affectsConfiguration("stackStats.syncHourlyActivity")) {
+      // Only upload policy changed; it must not manufacture a session break.
+      profileSync.accountChanged();
+      void profileSync.tick(true);
+      if (!["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "collectFilesystem", "collectGit", "collectWorkflows", "collectDiagnostics", "allowAttributionReports", "rawRetentionDays", "showStatusBar"]
+        .some(key => event.affectsConfiguration(`stackStats.${key}`))) return;
+    }
     // Display preferences must not interrupt the active-time evidence interval.
     if (event.affectsConfiguration("stackStats.showStatusBar") && ![
       "enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames",

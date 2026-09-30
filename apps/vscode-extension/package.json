@@ -182,6 +182,12 @@
           "scope": "application",
           "description": "At startup, remove local telemetry batches delivered more than this many days ago. 0 retains indefinitely. Undelivered telemetry, session history and daemon SQLite are preserved."
         },
+        "stackStats.syncHourlyActivity": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Include private UTC hourly activity aggregates when Profile Sync is enabled and the server supports the richer contract. This can reveal work schedules. Public sharing remains a separate choice. Disabling queues replacements without hourly data; existing server data changes only after successful sync."
+        },
         "stackStats.showStatusBar": {
           "type": "boolean",
           "default": true,

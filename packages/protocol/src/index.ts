@@ -89,3 +89,4 @@ export type SessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
 export type StackStatsEvent = z.infer<typeof stackStatsEventSchema>;
 
 export * from "./sync.js";
+export * from "./sync-v2.js";

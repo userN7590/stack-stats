@@ -110,6 +110,12 @@ async function run() {
   const annotated = await api.query(range);
   assert.equal(annotated.edits.editCount, measured.edits.editCount, "Provenance annotations do not create extra edits");
   assert(annotated.attribution.reportedAiShare > 0, "Explicit provider report is reflected");
+  const hourlyDirectory = join(directory, "..", "hourly-v1");
+  const hourlyRows = await Promise.all((await readdir(hourlyDirectory)).filter((file) => /^\d{4}-\d{2}-\d{2}\.json$/.test(file))
+    .map(async (file) => JSON.parse(await readFile(join(hourlyDirectory, file), "utf8"))));
+  assert.equal(hourlyRows.reduce((sum, day) => sum + day.editCountByHour.reduce((a, b) => a + b, 0), 0),
+    annotated.edits.editCount, "Real collected edits reach the durable hourly projection exactly once");
+  assert(!JSON.stringify(hourlyRows).includes("PRIVATE_TOKEN"), "Hourly projection excludes source contents");
   await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
   observer.dispose();
   console.log("Stack Stats real VS Code smoke test passed: activation, commands/API, edits/save, sessions, exclusions, lifecycle, tasks, provenance and persistence.");

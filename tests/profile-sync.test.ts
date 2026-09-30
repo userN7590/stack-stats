@@ -23,7 +23,10 @@ async function harness() {
     return Response.json({ installationId: install, date: body.date, revision: body.revision });
   });
   const account = { getState: () => state, getAccessToken: vi.fn(async () => "access"), refreshAccessToken: vi.fn(async () => "new-access"), getOrigin: () => "https://stackstats.dev" };
-  const ports = { directory, installationId: install, projectSalt: "private-test-salt", account, sessions: async () => sessions, today: () => "2026-09-10", now: () => time, fetch: fetcher, random: () => 0 };
+  // Model an unchanged v1 server. Keep PUT assertions separate from the new,
+  // read-only capability probe so response-loss/retry fixtures target uploads.
+  const transport: typeof fetch = async (url, options) => String(url).endsWith("/capabilities") ? new Response(null, { status: 404 }) : fetcher(url, options);
+  const ports = { directory, installationId: install, projectSalt: "private-test-salt", account, sessions: async () => sessions, today: () => "2026-09-10", now: () => time, fetch: transport, random: () => 0 };
   const service = new ProfileSyncService(ports); services.push(service);
   return { ...ports, fetcher, service, setState: (value: AccountState) => { state = value; service.accountChanged(); }, advance: (ms: number) => { time += ms; }, restore: () => { const next = new ProfileSyncService(ports); services.push(next); return next; }, rows: sessions };
 }
@@ -78,7 +81,7 @@ describe("durable profile synchronization", () => {
     const restored = h.restore(); await restored.tick(true);
     const payloads = h.fetcher.mock.calls.map(([, options]) => JSON.parse(options!.body as string));
     expect(payloads.map(row => row.revision)).toEqual([1, 2]); expect(restored.getState().pendingDays).toBe(0);
-    expect(h.account.getAccessToken).toHaveBeenCalledTimes(2);
+    expect(h.account.getAccessToken).toHaveBeenCalledTimes(4); // Two probes and two PUTs across restart.
   });
   it("does not rewrite an unchanged idle queue on each scheduling tick", async () => {
     const h = await harness(); await h.service.tick(true);
