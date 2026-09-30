@@ -91,7 +91,20 @@ Queries expose **reported AI share**, **reported human share**, **unknown share*
 
 `laterEditorEditsInAiTouchedFiles` is a deliberately limited proxy: subsequent non-AI-labeled edits to a file touched by a reported AI edit **within the selected range**. It does not prove a human made the later edit or that the same lines were changed. `exactHumanModifiedAiCharacters` is always `null`: exact code lineage/retention cannot be reconstructed from these content-free observations. Do not label this proxy “human correction of AI code.”
 
-Not currently measurable reliably: universal human/AI attribution; automatic identification of Codex/Claude/Cursor writes; exact human reworking/retention of AI-generated code; real idle or total working time; individual test-case outcomes across all providers; terminal commands/builds/tests outside VS Code tasks; external writer identity; exact filesystem change counts or external character diffs; Git activity missed between polls or while offline. No values are fabricated for these signals.
+Not currently measurable reliably: universal human/AI attribution; identification of agent writes without that agent's own opt-in hook; exact human reworking/retention of AI-generated code; real idle or total working time; individual test-case outcomes across all providers; terminal commands/builds/tests outside VS Code tasks; external writer identity without explicit evidence; external character diffs, or line diffs for files not open in VS Code; Git activity missed between polls or while offline. No values are fabricated for these signals.
+
+### Agent-aware provenance (Phase 9E)
+
+External and agent changes are now reconciled into a separate **local-only** ledger (`globalStorage/provenance-v1`), outside telemetry-v2, so nothing below reaches the daemon, the hourly projection or profile sync. The existing `filesystem.changed` notification counter is unchanged.
+
+- **What is recorded.** Each physical external write becomes at most one change record: duplicate watcher layers, the open-document reload, VS Code's own saves and scratch files are reconciled away. Open documents contribute exact diff lines from VS Code's whole-line reload edits.
+- **How an agent is named.**
+  - `explicit`: only when Claude Code or Codex hooks, opted into via `stackStats.agentIntegrations.*` and *Set Up Agent Integrations*, report a successful file edit.
+  - `correlated`: when a change falls inside one agent's shell-command window.
+  - Everything else stays `unknown`. Version-control operations and bulk bursts are never attributed.
+- **Agent runs.** Runs (agent turns) are derived from hook lifecycle signals and reported as a lower-bound runtime, separate from active coding time, which is unchanged.
+
+Inspect it with **Stack Stats: Show Agent Activity** or `api.agentActivity(range)`. Full audit, experiments, model and limits: [PHASE-9E-AGENT-TELEMETRY.md](PHASE-9E-AGENT-TELEMETRY.md).
 
 ## Query architecture
 

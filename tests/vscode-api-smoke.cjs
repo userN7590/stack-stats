@@ -1,8 +1,106 @@
 const assert = require("node:assert/strict");
-const { writeFile } = require("node:fs/promises");
+const { writeFile, readFile, readdir, rename, mkdir } = require("node:fs/promises");
+const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
 const { randomUUID, createHash } = require("node:crypto");
 const vscode = require("vscode");
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Phase 9E: external/agent changes are observed, deduplicated and attributed only
+ * with explicit hook evidence, without ever touching human session time. */
+async function agentAndExternalActivity(api, root, range) {
+  const ws = join(root, "workspace"), home = join(root, "daemon");
+  const settings = () => vscode.workspace.getConfiguration("stackStats");
+  // Closed-document writes, twice across a quiet gap: two unknown changes.
+  await writeFile(join(ws, "closed.ts"), "export const a = 1;\n");
+  await sleep(2500);
+  await writeFile(join(ws, "closed.ts"), "export const a = 2;\nexport const b = 3;\n");
+  // Open-document write: VS Code reloads the clean model; its line diff is used.
+  await writeFile(join(ws, "open.ts"), "const kept = 0;\nconst changed = 1;\n");
+  await sleep(1500);
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(join(ws, "open.ts")));
+  await sleep(500);
+  await writeFile(join(ws, "open.ts"), "const kept = 0;\nconst changed = 'external';\nconst added = 2;\n");
+  // Multi-file burst: one aggregate record, never 30 claims. Near-simultaneous
+  // writes are indistinguishable by design, so the burst is kept apart here.
+  await sleep(2500);
+  await mkdir(join(ws, "burst"));
+  await Promise.all(Array.from({ length: 30 }, (_, i) => writeFile(join(ws, "burst", `f${i}.ts`), `export const f${i} = ${i};\n`)));
+  await sleep(2500);
+  let summary = await api.agentActivity(range);
+  assert(summary.external.unknown.events >= 3, "External writes are observed as unknown-writer changes");
+  assert(summary.external.unknown.linesAdded >= 2 && summary.external.unknown.deltaUnknown >= 2, "Open documents supply diff lines; closed files stay without line counts");
+  assert.equal(summary.external.bulk.operations, 1, "A 30-file burst is one bulk operation");
+  assert(summary.external.bulk.files >= 30);
+  assert.equal(summary.agent.runs.total, 0, "No agent runs without hook evidence");
+  assert.equal(summary.agent.explicit.events + summary.agent.correlated.events, 0, "Nothing is attributed to an agent without evidence");
+  const stats = await api.query(range);
+  assert.equal(stats.edits.editCount, 0, "External writes never become editor edits");
+  assert.equal(stats.activeMs, 0, "External writes never earn active time");
+  const storage = join(root, "user-data", "User", "globalStorage", vscode.extensions.all.find((item) => item.packageJSON.name === "stack-stats-vscode").id.toLowerCase());
+  assert.equal((await readdir(join(storage, "sessions-v1")).catch(() => [])).filter((file) => file.endsWith(".json")).length, 0, "External writes never start a coding session");
+
+  const unknownBefore = summary.external.unknown.events;
+  // Adapter lifecycle through the real bundled hook, run by the editor's own runtime.
+  await settings().update("agentIntegrations.claudeCode", true, vscode.ConfigurationTarget.Global);
+  await settings().update("agentIntegrations.codex", true, vscode.ConfigurationTarget.Global);
+  await vscode.commands.executeCommand("stackStats.setupAgentIntegrations");
+  const hook = join(home, "hooks", "stack-stats-agent-hook-v1.cjs");
+  const runHook = (tool, payload) => {
+    const result = spawnSync(process.execPath, [hook, tool], { input: JSON.stringify(payload), encoding: "utf8", timeout: 15000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", STACK_STATS_HOME: home } });
+    assert.equal(result.status, 0, `hook exit ${result.stderr}`);
+    assert.equal(result.stdout, "", "Hooks print nothing");
+  };
+  const claude = (event, extra) => ({ session_id: "smoke-claude-session", transcript_path: "/private/transcript.jsonl", cwd: ws, prompt_id: "smoke-prompt", hook_event_name: event, ...extra });
+  // Claude Code's observed write: temp file + rename over the target.
+  await writeFile(join(ws, "agent.ts.tmp.1.abcdef123456"), "export const agent = 1;\n");
+  await rename(join(ws, "agent.ts.tmp.1.abcdef123456"), join(ws, "agent.ts"));
+  runHook("claude-code", claude("PostToolUse", { tool_name: "Write", tool_use_id: "toolu_smoke_1", duration_ms: 3,
+    tool_input: { file_path: join(ws, "agent.ts"), content: "export const agent = 1;\n" }, tool_response: { type: "create", structuredPatch: [], originalFile: null } }));
+  await writeFile(join(ws, "script-output.ts"), "export const generated = true;\n");
+  runHook("claude-code", claude("PostToolUse", { tool_name: "Bash", tool_use_id: "toolu_smoke_2", duration_ms: 1500, tool_input: { command: "node generate.js" }, tool_response: { stdout: "PRIVATE_STDOUT" } }));
+  runHook("claude-code", claude("Stop", { last_assistant_message: "PRIVATE_REPLY" }));
+  await sleep(2000);
+  // Codex apply_patch writes in place.
+  await writeFile(join(ws, "codex.ts"), "export const codex = 1;\nexport const more = 2;\n");
+  runHook("codex", { session_id: "smoke-codex-session", turn_id: "smoke-turn", transcript_path: null, cwd: ws, hook_event_name: "PostToolUse", model: "m", permission_mode: "default",
+    tool_name: "apply_patch", tool_use_id: "call_smoke", tool_input: { command: "*** Begin Patch\n*** Add File: codex.ts\n+export const codex = 1;\n+export const more = 2;\n*** End Patch" },
+    tool_response: "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nSuccess." });
+  runHook("codex", { session_id: "smoke-codex-session", turn_id: "smoke-turn", transcript_path: null, cwd: ws, hook_event_name: "Stop", model: "m", permission_mode: "default", last_assistant_message: "PRIVATE_REPLY" });
+  await sleep(2000);
+  summary = await api.agentActivity(range);
+  // After opting out, the hook writes nothing (and unread records would be purged).
+  await settings().update("agentIntegrations.codex", false, vscode.ConfigurationTarget.Global);
+  await sleep(500);
+  runHook("codex", { session_id: "disabled", cwd: ws, hook_event_name: "Stop", model: "m", permission_mode: "default" });
+  assert.equal((await readdir(join(home, "agent-inbox-v1", "records")).catch(() => [])).length, 0, "A disabled integration writes no inbox record");
+  const byTool = Object.fromEntries(summary.agent.byTool.map((entry) => [entry.tool, entry]));
+  assert.equal(byTool["claude-code"].runs, 1, "One Claude Code run");
+  assert.equal(byTool["claude-code"].explicit.events, 1, "Claude Code Write reported explicitly");
+  assert.equal(byTool["claude-code"].explicit.linesAdded, 1);
+  assert.equal(byTool["claude-code"].correlated.events, 1, "Change during the agent's shell command is correlated, not explicit");
+  assert.equal(byTool.codex.runs, 1, "One Codex run; the disabled integration wrote nothing");
+  assert.equal(byTool.codex.explicit.events, 1, "Codex apply_patch reported explicitly");
+  assert.equal(byTool.codex.explicit.linesAdded, 2);
+  const records = await api.provenance(range);
+  const serialized = JSON.stringify(records);
+  for (const secret of [root, "PRIVATE_STDOUT", "PRIVATE_REPLY", "smoke-claude-session", "toolu_smoke", "node generate.js", "export const"]) assert(!serialized.includes(secret), `${secret} not stored`);
+  assert.equal(summary.external.unknown.events, unknownBefore, "Agent-written files are not double counted as unknown external changes");
+  assert.equal((await readdir(join(home, "agent-inbox-v1", "records"))).length, 0, "Claimed hook records are deleted after ingestion");
+  const after = await api.query(range);
+  assert.equal(after.edits.editCount, 0, "Agent activity never becomes editor edits");
+  assert.equal(after.activeMs, 0, "Agent runtime never becomes coding time");
+  const telemetry = await api.events({ ...range, limit: 1000 });
+  assert(!telemetry.events.some((event) => ["agent", "change"].includes(event.kind)), "Provenance never enters telemetry-v2");
+  assert.equal(api.profileSync.getState().status, "not-connected", "Agent integration does not enable sync");
+  await vscode.commands.executeCommand("stackStats.showAgentActivity");
+  await settings().update("agentIntegrations.claudeCode", false, vscode.ConfigurationTarget.Global);
+  await sleep(500); // The state file is rewritten asynchronously after a settings change.
+  const state = JSON.parse(await readFile(join(home, "agent-inbox-v1", "state.json"), "utf8"));
+  assert.deepEqual(state.integrations, { "claude-code": false, codex: false }, "Disabling integrations tells the hook to stop writing");
+}
 
 exports.run = async () => {
   const root = process.env.STACK_STATS_SMOKE_DIR;
@@ -84,6 +182,7 @@ exports.run = async () => {
       await vscode.commands.executeCommand(`stackStats.${command}`);
     }
     assert.equal((await api.query(range)).edits.editCount, 0, "Navigating/refreshing the UI does not manufacture activity");
+    await agentAndExternalActivity(api, root, range);
     await writeFile(join(root, "passed"), "passed");
   } catch (error) {
     await writeFile(join(root, "failed"), error.stack ?? String(error)); throw error;

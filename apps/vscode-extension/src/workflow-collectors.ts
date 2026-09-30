@@ -18,7 +18,7 @@ export class WorkflowCollectors {
 
   constructor(private readonly buffer: TelemetryBuffer, private readonly metadata: DocumentMetadata,
     private readonly hash: (value: string) => string, private readonly policy: () => PrivacyPolicy,
-    private readonly enabled: () => boolean) {
+    private readonly enabled: () => boolean, private readonly onFilesystem?: (uri: vscode.Uri, operation: "created" | "changed" | "deleted") => void) {
     const on = (disposable: vscode.Disposable) => this.disposables.push(disposable);
     on(vscode.workspace.onWillSaveTextDocument((event) => this.saves.set(event.document.uri.toString(),
       event.reason === vscode.TextDocumentSaveReason.Manual ? "manual" : event.reason === vscode.TextDocumentSaveReason.AfterDelay ? "after_delay" : "focus_out")));
@@ -50,9 +50,11 @@ export class WorkflowCollectors {
     }));
     const watcher = vscode.workspace.createFileSystemWatcher("**/*");
     on(watcher);
-    on(watcher.onDidCreate((uri) => this.filesystem(uri, "created")));
-    on(watcher.onDidChange((uri) => this.filesystem(uri, "changed")));
-    on(watcher.onDidDelete((uri) => this.filesystem(uri, "deleted")));
+    // One recursive watcher is shared with the external-change observer, which
+    // applies its own eligibility; this coalesced notification counter is unchanged.
+    on(watcher.onDidCreate((uri) => { this.onFilesystem?.(uri, "created"); this.filesystem(uri, "created"); }));
+    on(watcher.onDidChange((uri) => { this.onFilesystem?.(uri, "changed"); this.filesystem(uri, "changed"); }));
+    on(watcher.onDidDelete((uri) => { this.onFilesystem?.(uri, "deleted"); this.filesystem(uri, "deleted"); }));
     on(vscode.languages.onDidChangeDiagnostics((event) => {
       if (!this.enabled() || !this.setting("collectDiagnostics", false)) return;
       for (const uri of event.uris) {

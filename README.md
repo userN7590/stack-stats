@@ -22,6 +22,10 @@ Stack Stats now also exposes a versioned normalized-event engine for character e
 
 New commands: **Show Telemetry Today**, **Compare Telemetry Weeks**, and **Show Telemetry Privacy**. CLI: `pnpm stackstats telemetry --today`, `events --week`, and `compare --week`.
 
+## Agent and external changes (local only)
+
+Changes made outside the editor are now observed and reconciled locally, whether by a terminal command, a script, Claude Code, Codex or a checkout. They never count as coding time. An agent is named only when its own opt-in hook reports the change (**Stack Stats: Set Up Agent Integrations**; settings `stackStats.agentIntegrations.claudeCode` / `.codex`, off by default); everything else stays "writer unknown". **Stack Stats: Show Agent Activity** lists agent runs, agent-reported changes and external changes side by side. Nothing here is synced or published. See [Phase 9E: agent-aware telemetry](docs/PHASE-9E-AGENT-TELEMETRY.md).
+
 ## What is tracked
 
 - Session start and last observed edit time, estimated active duration, and ending reason when known.
@@ -72,6 +76,8 @@ Open the Command Palette and run:
 | **Stack Stats: Show Telemetry Today** | Derived edit, workflow, Git and attribution analytics |
 | **Stack Stats: Compare Telemetry Weeks** | Compare this week's observations with last week's |
 | **Stack Stats: Show Telemetry Privacy** | Collection policy, exclusions and measurement limits |
+| **Stack Stats: Show Agent Activity** | Local agent runs, agent-reported and external changes, kept separate from coding time |
+| **Stack Stats: Set Up Agent Integrations** | Print opt-in Claude Code / Codex hook configuration; never edits their settings |
 | **Stack Stats: Refresh Stats** | Checkpoint and reload local history; also available in view title bars |
 | **Stack Stats: Open Dashboard** | Open https://stackstats.dev in the browser; no upload |
 | **Stack Stats: Connect Stack Stats Account** | Optional secure browser sign-in and explicit editor approval |
@@ -196,7 +202,7 @@ The UI regression suite covers cached/live revision deduplication, streaks acros
 - Active time approximates focused editing, and excludes reading, debugging, planning, terminal work and long pauses between edits. It is not total working time. Cross-window sessions are intentionally separate. Concurrent remote collectors/machines are not reconciled into a single wall-clock timeline.
 - A new session begins after restart. Schema records from a crash may have no explicit ending reason. The last checkpoint is the recovery boundary, not a guarantee against disk failure or power loss.
 - Rename/Save As and untitled-to-file transitions do not have a reliable shared identity yet. Earlier unsaved changes remain recorded without duplicate line counts, but later editing the saved/renamed file can increase unique files touched. Untitled documents use the only workspace root when unambiguous; otherwise they use “Loose files.”
-- Notebook cells, virtual documents and browser-only VS Code are not collected. Edits to invisible files by workspace-wide tools are excluded. Formatter/AI edits in visible documents may be included and are not proof of human authorship.
+- Notebook cells, virtual documents and browser-only VS Code are not collected. Edits to invisible files by workspace-wide tools are excluded. Formatter/AI edits in visible documents may be included and are not proof of human authorship. Changes made outside the editor are reported separately as local agent/external activity and never as coding time.
 - Session history is retained indefinitely as compact local files plus optional SQLite mirrors. New raw telemetry has its own configurable acknowledged-data retention. Git observations, exclusions, and rich queries are now implemented; there is no polished dashboard, cloud sync or team analytics. Account linking is optional and separate from telemetry. Resetting the daemon database also requires resetting `.synced` acknowledgements to replay already-delivered local history. See the telemetry guide for attribution and coverage limitations.
 
 Highest-value next steps:

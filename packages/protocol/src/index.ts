@@ -1,5 +1,6 @@
 import { z } from "zod";
 export * from "./telemetry.js";
+export * from "./provenance.js";
 
 const identifier = z.string().min(1).max(256);
 

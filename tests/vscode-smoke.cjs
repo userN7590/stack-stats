@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { readFile, readdir, writeFile } = require("node:fs/promises");
+const { readFile, readdir, writeFile, rename: moveFile } = require("node:fs/promises");
 const { join } = require("node:path");
 const vscode = require("vscode");
 
@@ -116,6 +116,41 @@ async function run() {
   assert.equal(hourlyRows.reduce((sum, day) => sum + day.editCountByHour.reduce((a, b) => a + b, 0), 0),
     annotated.edits.editCount, "Real collected edits reach the durable hourly projection exactly once");
   assert(!JSON.stringify(hourlyRows).includes("PRIVATE_TOKEN"), "Hourly projection excludes source contents");
+  // Phase 9E: agent-style writes while the user is idle must not extend, credit or
+  // start a session; a later human edit of the agent-changed file counts normally.
+  const agentFile = join(root, "workspace", "agent-open.ts");
+  await writeFile(agentFile, "const kept = 0;\nconst changed = 1;\n");
+  const agentEditor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(agentFile));
+  await vscode.commands.executeCommand("stackStats.showToday");
+  const latest = async () => (await snapshots()).sort((a, b) => a.endedAt.localeCompare(b.endedAt)).at(-1);
+  const beforeAgent = await latest();
+  const countEdits = (session) => session.days.flatMap((day) => day.contributions).reduce((sum, row) => sum + row.editCount, 0);
+  const activeTime = (session) => session.days.flatMap((day) => day.contributions).reduce((sum, row) => sum + row.activeMs, 0);
+  for (let i = 0; i < 3; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    // Claude Code's observed write pattern: temp file, then rename over the target.
+    await writeFile(`${agentFile}.tmp.9.abcdef${i}0`, `const kept = 0;\nconst changed = ${i + 2};\nconst added${i} = true;\n`);
+    await moveFile(`${agentFile}.tmp.9.abcdef${i}0`, agentFile);
+    await writeFile(join(root, "workspace", "agent-closed.ts"), `export const run = ${i};\n`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await vscode.commands.executeCommand("stackStats.showToday");
+  const afterAgent = await latest();
+  assert.equal(afterAgent.sessionId, beforeAgent.sessionId, "Agent writes do not start a session");
+  assert.equal(afterAgent.endedAt, beforeAgent.endedAt, "Agent writes do not extend the session");
+  assert.equal(countEdits(afterAgent), countEdits(beforeAgent), "Disk reloads of an open document are not editor edits");
+  assert.equal(activeTime(afterAgent), activeTime(beforeAgent), "Agent writes earn no active time");
+  assert(agentEditor.document.getText().includes("added2"), "The open document reloaded the agent's change");
+  const agentSummary = await api.agentActivity(range);
+  assert(agentSummary.external.unknown.events >= 2, "External writes are observed without an integration");
+  assert(agentSummary.external.unknown.linesAdded >= 1, "Open-document reloads provide diff lines");
+  assert.equal(agentSummary.agent.explicit.events + agentSummary.agent.correlated.events, 0, "No agent attribution without hook evidence");
+  await focus();
+  await agentEditor.edit((builder) => builder.insert(new vscode.Position(0, 0), "// human follow-up\n"));
+  await vscode.commands.executeCommand("stackStats.showToday");
+  assert.equal(countEdits(await latest()), countEdits(afterAgent) + 1, "A human edit after agent work counts normally");
+  await agentEditor.document.save();
+  await vscode.window.showTextDocument(excluded);
   await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
   observer.dispose();
   console.log("Stack Stats real VS Code smoke test passed: activation, commands/API, edits/save, sessions, exclusions, lifecycle, tasks, provenance and persistence.");

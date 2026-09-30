@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, constants, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { SessionTracker, countLineChanges, countCharacterChanges, localDateKey, PrivacyPolicy, queryTelemetry, compareTelemetry, filterTelemetry } from "@stack-stats/core";
 import { telemetryQuerySchema, telemetryEventSchema, type TelemetryData, type TelemetryQuery } from "@stack-stats/protocol";
 import { LocalSessionStore } from "./local-store.js";
@@ -19,6 +19,11 @@ import { WorkflowCollectors } from "./workflow-collectors.js";
 import { GitObserver } from "./git-observer.js";
 import { ProfileSyncService, stableInstallation, stableSyncSalt } from "./profile-sync.js";
 import { createAccountService } from "./vscode-account.js";
+import { ProvenanceLedger } from "./provenance-ledger.js";
+import { AgentInbox, agentHome } from "./agent-inbox.js";
+import { ExternalChangeObserver } from "./external-observer.js";
+import { formatAgentActivity } from "./agent-report.js";
+import { agentAdapters, hookTools, type HookCommand } from "./agent-adapters.js";
 
 const CHECKPOINT_MS = 15_000;
 let shutdown: (() => Promise<void>) | undefined;
@@ -64,7 +69,7 @@ export async function activate(context: vscode.ExtensionContext) {
     onLifecycle: (sessionId, at, state, reason) => { buffer.emit("session.lifecycle", { state, reason }, { sessionId }, at); }
   });
   const metadata = new DocumentMetadata(salt, () => policy);
-  const collector = new DocumentCollector(tracker, (event) => buffer.edit(event, tracker.sessionId));
+  const collector = new DocumentCollector(tracker, (event) => { buffer.edit(event, tracker.sessionId); observer.editorEdit(event); });
   let historyWarning = false;
   const store = new LocalSessionStore(join(context.globalStorageUri.fsPath, "sessions-v1"), message => { historyWarning = true; log(message); });
   // A missing/unreadable privacy salt must fail sync closed, never tracking.
@@ -85,7 +90,17 @@ export async function activate(context: vscode.ExtensionContext) {
   let lastStatusUpdate = 0;
   let uiUpdate: ReturnType<typeof setTimeout> | undefined;
   let saves: Promise<void> = Promise.resolve();
-  const workflows = new WorkflowCollectors(buffer, metadata, (value) => hash(value, salt), () => policy, () => enabled && !stopped);
+  const settings = () => vscode.workspace.getConfiguration("stackStats");
+  const integrationSettings = () => ({ "claude-code": settings().get("agentIntegrations.claudeCode", false), codex: settings().get("agentIntegrations.codex", false) });
+  const ledger = new ProvenanceLedger(join(context.globalStorageUri.fsPath, "provenance-v1"), log);
+  const inbox = new AgentInbox(agentHome());
+  const bundledHook = join(context.extensionPath, "dist", "agent-hook.cjs");
+  // Agent/external provenance is local-only and never extends human sessions.
+  const observer = new ExternalChangeObserver({ installationId, metadata, hash: (value) => hash(value, salt), policy: () => policy, ledger, inbox,
+    collecting: () => enabled && !stopped, filesystem: () => settings().get("collectFilesystem", true),
+    integrations: () => new Set(hookTools.filter((tool) => integrationSettings()[tool])), telemetry: () => telemetry.events(), log });
+  context.subscriptions.push(observer);
+  const workflows = new WorkflowCollectors(buffer, metadata, (value) => hash(value, salt), () => policy, () => enabled && !stopped, (uri, operation) => observer.watcher(uri, operation));
   const git = new GitObserver(buffer, (value) => hash(value, salt));
   context.subscriptions.push(workflows);
 
@@ -143,15 +158,38 @@ export async function activate(context: vscode.ExtensionContext) {
     return saves;
   }
 
+  /** The hook reads this file and writes nothing unless tracking is on and the
+   * user enabled that integration. No files are created before an opt-in. */
+  async function syncAgentState(install = false): Promise<void> {
+    const integrations = integrationSettings();
+    const any = hookTools.some((tool) => integrations[tool]);
+    if (!any && !install && !(await inbox.exists())) return;
+    try {
+      await inbox.writeState({ stateVersion: 1, collecting: enabled, integrations, excludeFiles: settings().get<string[]>("excludeFiles", []).slice(0, 256), updatedAt: new Date().toISOString() });
+      if (any || install) await inbox.installHook(bundledHook);
+    } catch { log("Agent integration state could not be written; agent hooks will not record until this is fixed."); }
+  }
+  async function hookCommand(script: string): Promise<HookCommand> {
+    for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+      if (!directory) continue;
+      const candidate = join(directory, process.platform === "win32" ? "node.exe" : "node");
+      try { await access(candidate, constants.X_OK); return { executable: candidate, script }; } catch { /* Try the next PATH entry. */ }
+    }
+    // The editor's own runtime can run the hook when Node.js is not installed.
+    return { executable: process.execPath, script, env: { ELECTRON_RUN_AS_NODE: "1" } };
+  }
+
   try {
     await store.initialize();
     await telemetry.initialize(vscode.workspace.getConfiguration("stackStats").get("rawRetentionDays", 30));
+    await ledger.initialize(vscode.workspace.getConfiguration("stackStats").get("rawRetentionDays", 30));
     delivery.enqueue(await store.pending());
   } catch {
     storageError = true;
     log("Local storage could not be opened. Check storage permissions before relying on recorded history.");
   }
   void loadHistory();
+  void syncAgentState();
   log("Session collector loaded. History contains metadata only; checkpoints run every 15 seconds.");
   if (!config) log("Daemon sync is not configured. Local history and all reports work. To enable CLI summaries, initialize the CLI and reload this window.");
   function coverage() {
@@ -162,7 +200,9 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   coverage();
 
-  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(({ document, contentChanges, reason }) => {
+  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((event) => {
+    const { document, contentChanges, reason } = event;
+    if (!stopped) observer.documentChanged(event);
     if (stopped || !enabled) return;
     const identity = metadata.get(document);
     if (!identity) { tracker.breakInterval(); return; }
@@ -191,6 +231,12 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { metadata.clear(); tracker.breakInterval(); workflows.reset(); git.reset(); }));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
     if (!event.affectsConfiguration("stackStats")) return;
+    if (event.affectsConfiguration("stackStats.agentIntegrations")) {
+      // Opting in/out of agent hooks must not interrupt the human session.
+      void syncAgentState();
+      if (!["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "collectFilesystem", "collectGit", "collectWorkflows",
+        "collectDiagnostics", "allowAttributionReports", "rawRetentionDays", "showStatusBar", "syncHourlyActivity"].some(key => event.affectsConfiguration(`stackStats.${key}`))) return;
+    }
     if (event.affectsConfiguration("stackStats.syncHourlyActivity")) {
       // Only upload policy changed; it must not manufacture a session break.
       profileSync.accountChanged();
@@ -212,7 +258,7 @@ export async function activate(context: vscode.ExtensionContext) {
     tracker.expire(Date.now());
     try { policy = readPolicy(); } catch { policy = new PrivacyPolicy(["**"], ["**"]); log("Invalid exclusions: collection is disabled until corrected."); }
     tracker.breakInterval(); collector.clear(); workflows.reset(); git.reset(); coverage();
-    metadata.clear();
+    metadata.clear(); observer.reset(); void syncAgentState();
     refresh();
   }));
 
@@ -283,7 +329,30 @@ export async function activate(context: vscode.ExtensionContext) {
     show(JSON.stringify(compareTelemetry(await telemetry.events(), { from: from.toISOString(), to: to.toISOString() },
       { from: previousFrom.toISOString(), to: from.toISOString() }), null, 2));
   });
-  command("showPrivacy", () => show(`Telemetry privacy\n\nNo source, prompts, command lines, debug configuration, diagnostic messages, commit messages, authors or remote URLs are collected.\nAI/manual attribution requires explicit reports and is never inferred from editor brand.\nExcluded files: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []).length} custom pattern(s) plus built-in exclusions.\nExcluded projects: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []).length} pattern(s).\nTelemetry journal: ${telemetry.journal.directory}\n${telemetry.state}`));
+  command("showAgentActivity", async () => {
+    await checkpoint(); await observer.flush(true);
+    show(formatAgentActivity(await observer.summary(todayRange()), { integrations: integrationSettings(), filesystem: settings().get("collectFilesystem", true),
+      collecting: enabled, now: Date.now(), title: "Agent & external activity today" }));
+  });
+  command("setupAgentIntegrations", async () => {
+    await syncAgentState(true);
+    const hook = await hookCommand(await inbox.installHook(bundledHook));
+    const enabledTools = integrationSettings();
+    show([`Stack Stats — Agent integrations (optional, local only)`, "",
+      "Stack Stats never edits Claude Code or Codex configuration. To opt in:",
+      "  1. Enable stackStats.agentIntegrations.claudeCode and/or stackStats.agentIntegrations.codex.",
+      "  2. Add the matching hook configuration below to that tool.",
+      "  3. Run Stack Stats: Show Agent Activity after an agent turn to verify signals arrived.", "",
+      `Hook script (version-stable copy): ${hook.script}`,
+      `Agent inbox: ${inbox.paths.records} (transient; records are deleted once ingested)`,
+      ...hookTools.flatMap((tool) => {
+        const setup = agentAdapters[tool].setup(hook);
+        return ["", `── ${setup.displayName}: ${enabledTools[tool] ? "enabled in Stack Stats" : "not enabled in Stack Stats (the hook writes nothing until you enable it)"}`,
+          `Add to ${setup.file}:`, setup.snippet, ...setup.notes.map((note) => `• ${note}`)];
+      }),
+      "", "Remove the hook entries from the tool's settings (or turn the Stack Stats setting off) to stop. Agent runtime is reported separately and never counts as coding time."].join("\n"));
+  });
+  command("showPrivacy", () => show(`Telemetry privacy\n\nNo source, prompts, command lines, debug configuration, diagnostic messages, commit messages, authors or remote URLs are collected.\nAI/manual attribution requires explicit reports and is never inferred from editor brand.\nAgent integrations (off by default) keep hashed run IDs, tool kinds, durations, salted file IDs and diff-line counts locally; prompts, responses, commands and file contents are never stored. Agent and external-change records are local-only and are not synced.\nExcluded files: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []).length} custom pattern(s) plus built-in exclusions.\nExcluded projects: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []).length} pattern(s).\nTelemetry journal: ${telemetry.journal.directory}\n${telemetry.state}`));
 
   // A single low-frequency timer handles expiry, persistence, delivery and status.
   // HTTP retries run separately so an offline daemon cannot block checkpointing.
@@ -292,6 +361,7 @@ export async function activate(context: vscode.ExtensionContext) {
     account.checkIfDue();
     void checkpoint().then(() => { void delivery.sync().then(refresh); void profileSync.tick(); refresh(); });
     void telemetry.sync();
+    void observer.flush();
     if (enabled && vscode.workspace.isTrusted && vscode.workspace.getConfiguration("stackStats").get("collectGit", true)) {
       void git.poll((vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath), policy);
     }
@@ -307,6 +377,7 @@ export async function activate(context: vscode.ExtensionContext) {
     account.dispose();
     await checkpoint(); // Returning this promise lets VS Code await the durable write.
     await telemetry.checkpoint();
+    await observer.flush(true).catch(() => undefined);
   };
   refresh();
   void delivery.sync().then(refresh);
@@ -322,6 +393,21 @@ export async function activate(context: vscode.ExtensionContext) {
     query: async (input: unknown) => {
       const query = telemetryQuerySchema.parse(input);
       await checkpoint(); return queryTelemetry(await telemetry.events(), query);
+    },
+    /** Local-only agent/external provenance analytics (never uploaded). */
+    agentActivity: async (input: unknown) => {
+      const query = telemetryQuerySchema.parse(input);
+      await checkpoint(); await observer.flush(true);
+      return observer.summary(query);
+    },
+    provenance: async (input: unknown) => {
+      const query = telemetryQuerySchema.parse(input);
+      await observer.flush(true);
+      const from = Date.parse(query.from), to = Date.parse(query.to);
+      return (await observer.records()).filter((record) => {
+        const at = Date.parse(record.kind === "change" ? record.observedAt : record.at);
+        return at >= from && at < to;
+      });
     },
     events: async (input: unknown) => {
       const query = telemetryQuerySchema.parse(input);

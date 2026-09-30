@@ -58,6 +58,14 @@
         "title": "Stack Stats: Show Telemetry Privacy"
       },
       {
+        "command": "stackStats.showAgentActivity",
+        "title": "Stack Stats: Show Agent Activity"
+      },
+      {
+        "command": "stackStats.setupAgentIntegrations",
+        "title": "Stack Stats: Set Up Agent Integrations"
+      },
+      {
         "command": "stackStats.refreshStats",
         "title": "Stack Stats: Refresh Stats",
         "icon": "$(refresh)"
@@ -128,7 +136,7 @@
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Observe coalesced filesystem notifications in eligible workspaces; writer identity remains unknown."
+          "description": "Observe filesystem changes in eligible workspaces: coalesced notification counts plus local-only reconciled external-change records (open-document reloads supply diff lines). Writer identity stays unknown unless an agent integration reports it. External changes never count as coding time."
         },
         "stackStats.collectGit": {
           "type": "boolean",
@@ -153,6 +161,18 @@
           "default": false,
           "scope": "application",
           "description": "Allow cooperating extensions to report provenance for existing edit batches. Reports are claims, not verified authorship."
+        },
+        "stackStats.agentIntegrations.claudeCode": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Accept local signals from the Stack Stats Claude Code hook (see Set Up Agent Integrations). Records agent runs and agent-reported file changes as metadata only: no prompts, responses, commands or file contents. Local only; never synced. Agent runtime never counts as coding time."
+        },
+        "stackStats.agentIntegrations.codex": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Accept local signals from the Stack Stats Codex hook (see Set Up Agent Integrations). Records agent runs and agent-reported file changes as metadata only: no prompts, responses, commands or file contents. Local only; never synced. Agent runtime never counts as coding time."
         },
         "stackStats.excludeFiles": {
           "type": "array",
@@ -254,6 +274,11 @@
           "group": "settings@2"
         },
         {
+          "command": "stackStats.showAgentActivity",
+          "when": "view == stackStats.today",
+          "group": "settings@3"
+        },
+        {
           "command": "stackStats.openDashboard",
           "when": "view == stackStats.trackingStatus",
           "group": "account@1"
@@ -272,7 +297,7 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs",
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs && esbuild src/agent-hook.ts --bundle --platform=node --format=cjs --outfile=dist/agent-hook.cjs",
     "package": "pnpm build && vsce package --no-dependencies --allow-missing-repository"
   },
   "dependencies": {
@@ -292,6 +317,7 @@
   "license": "MIT",
   "files": [
     "dist/extension.cjs",
+    "dist/agent-hook.cjs",
     "resources/stack-stats.svg",
     "README.md",
     "LICENSE"

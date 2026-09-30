@@ -6,6 +6,8 @@ export * from "./sessions.js";
 export * from "./statistics.js";
 export * from "./telemetry.js";
 export * from "./privacy.js";
+export * from "./languages.js";
+export * from "./provenance.js";
 
 export interface ActivitySummary {
   editEvents: number;
