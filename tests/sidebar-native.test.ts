@@ -30,9 +30,9 @@ beforeEach(() => { vi.clearAllMocks(); host.providers.clear(); host.aliases.clea
 const state = (): SidebarState => ({ summary: new SessionSummaryCache().summarize("2026-09-02"), enabled: true,
   ready: true, refreshing: false, historyError: false, storageError: false, idleMinutes: 5, syncConfigured: false });
 describe("native VS Code sidebar adapter", () => {
-  it("registers two panels, preserves old focus commands, and reveals the requested section", async () => {
+  it("registers the native panels, preserves old focus commands, and reveals the requested section", async () => {
     const ui = new StatsSidebar(state());
-    expect([...host.providers.keys()]).toEqual(["stackStats.today", "stackStats.trackingStatus"]);
+    expect([...host.providers.keys()]).toEqual(["stackStats.today", "stackStats.agents", "stackStats.trackingStatus"]);
     const activity = host.providers.get("stackStats.today")!;
     const today = activity.getChildren().find(row => row.id === "today/today")!;
     expect(activity.getTreeItem(today)).toMatchObject({ label: "Today", description: "0s", collapsibleState: 2 });
@@ -48,7 +48,7 @@ describe("native VS Code sidebar adapter", () => {
     ui.update({ ...state(), enabled: false });
     expect(host.status.text).toContain("Paused");
     host.visible = false; ui.update(state()); expect(host.status.hide).toHaveBeenCalledOnce();
-    ui.dispose(); expect(host.status.dispose).toHaveBeenCalledOnce(); expect(host.disposed).toHaveBeenCalledTimes(4); expect(host.aliasDisposed).toHaveBeenCalledTimes(5);
+    ui.dispose(); expect(host.status.dispose).toHaveBeenCalledOnce(); expect(host.disposed).toHaveBeenCalledTimes(6); expect(host.aliasDisposed).toHaveBeenCalledTimes(5);
   });
   it("updates expanded descendants even when VS Code passes a stale parent object", () => {
     const view = state(); const snapshot = session("2026-09-02T12:00:00Z");

@@ -99,7 +99,7 @@ External and agent changes are now reconciled into a separate **local-only** led
 
 - **What is recorded.** Each physical external write becomes at most one change record: duplicate watcher layers, the open-document reload, VS Code's own saves and scratch files are reconciled away. Open documents contribute exact diff lines from VS Code's whole-line reload edits.
 - **How an agent is named.**
-  - `explicit`: only when Claude Code or Codex hooks, opted into via `stackStats.agentIntegrations.*` and *Set Up Agent Integrations*, report a successful file edit.
+  - `explicit`: only when Claude Code or Codex hooks, connected with one click in the Agents panel (Phase 9E.1), report a successful file edit.
   - `correlated`: when a change falls inside one agent's shell-command window.
   - Everything else stays `unknown`. Version-control operations and bulk bursts are never attributed.
 - **Agent runs.** Runs (agent turns) are derived from hook lifecycle signals and reported as a lower-bound runtime, separate from active coding time, which is unchanged.

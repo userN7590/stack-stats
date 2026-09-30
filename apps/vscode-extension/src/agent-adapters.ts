@@ -10,15 +10,13 @@ import { agentInboxRecordSchema, type AgentInboxRecord } from "@stack-stats/prot
  * Core telemetry never sees vendor payload shapes. No VS Code dependency. */
 export type HookTool = "claude-code" | "codex";
 export const hookTools: readonly HookTool[] = ["claude-code", "codex"];
-export interface HookCommand { executable: string; script: string; env?: Record<string, string> }
-export interface AgentSetupInstructions { tool: HookTool; displayName: string; file: string; snippet: string; notes: string[] }
 export interface AgentHookAdapter {
   readonly id: HookTool;
   readonly displayName: string;
-  /** Hook events (and tool matchers) the adapter consumes. */
+  /** Hook events (and tool matchers) the adapter consumes; agent-integrations.ts
+   * turns them into the managed vendor entries. */
   readonly hooks: ReadonlyArray<{ event: string; matcher?: string; timeout: number }>;
   normalize(payload: unknown, observedAt: number, recordId: string): AgentInboxRecord | undefined;
-  setup(command: HookCommand): AgentSetupInstructions;
 }
 type Payload = Record<string, unknown>;
 type FileReport = NonNullable<AgentInboxRecord["files"]>[number];
@@ -81,18 +79,6 @@ function finish(record: Record<string, unknown>): AgentInboxRecord | undefined {
   const parsed = agentInboxRecordSchema.safeParse(record);
   return parsed.success ? parsed.data : undefined;
 }
-const hookEntry = (command: HookCommand, tool: HookTool, timeout: number, exec: boolean) => {
-  const quoted = `${Object.entries(command.env ?? {}).map(([key, value]) => `${key}=${value} `).join("")}"${command.executable}" "${command.script}" ${tool}`;
-  return exec && !command.env ? { type: "command", command: command.executable, args: [command.script, tool], timeout } : { type: "command", command: quoted, timeout };
-};
-function hooksJson(adapter: AgentHookAdapter, command: HookCommand, exec: boolean) {
-  const hooks: Record<string, unknown[]> = {};
-  for (const { event, matcher, timeout } of adapter.hooks) {
-    (hooks[event] ??= []).push({ ...(matcher ? { matcher } : {}), hooks: [hookEntry(command, adapter.id, timeout, exec)] });
-  }
-  return JSON.stringify({ hooks }, null, 2);
-}
-
 const CLAUDE_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 function claudeFiles(payload: Payload, cwd: string): FileReport[] | undefined {
   const name = payload.tool_name, input = object(payload.tool_input), response = object(payload.tool_response);
@@ -162,13 +148,6 @@ export const claudeCodeAdapter: AgentHookAdapter = {
       case "SessionEnd": return finish({ ...common, signal: "session_ended", endReason: "session_ended" });
       default: return undefined;
     }
-  },
-  setup(command) {
-    return { tool: "claude-code", displayName: "Claude Code", file: "~/.claude/settings.json (merge into the existing \"hooks\" object)",
-      snippet: hooksJson(this, command, true),
-      notes: ["Hooks receive metadata on stdin; Stack Stats keeps only hashed session/turn/call IDs, tool kind, duration, file paths (resolved locally, never stored) and diff-line counts.",
-        "UserPromptSubmit is deliberately not used because its payload contains your prompt. Run time is therefore measured from the first observed tool call to the end of the turn.",
-        "Signals are written only while Stack Stats tracking is enabled and stackStats.agentIntegrations.claudeCode is on; otherwise the hook exits without writing."] };
   }
 };
 
@@ -237,13 +216,6 @@ export const codexAdapter: AgentHookAdapter = {
       case "SessionEnd": return finish({ ...common, signal: "session_ended", endReason: "session_ended" });
       default: return undefined;
     }
-  },
-  setup(command) {
-    return { tool: "codex", displayName: "Codex", file: "~/.codex/hooks.json (or [[hooks.<Event>]] tables in ~/.codex/config.toml)",
-      snippet: hooksJson(this, command, false),
-      notes: ["Codex requires you to trust new hooks before they run (review them with /hooks in Codex). Hooks are enabled by default in Codex 0.155+; [features] hooks = false disables them.",
-        "UserPromptSubmit is deliberately not used because its payload contains your prompt; Stop's last_assistant_message is ignored.",
-        "Signals are written only while Stack Stats tracking is enabled and stackStats.agentIntegrations.codex is on; otherwise the hook exits without writing."] };
   }
 };
 

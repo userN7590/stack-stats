@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
-import { access, constants, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { SessionTracker, countLineChanges, countCharacterChanges, localDateKey, PrivacyPolicy, queryTelemetry, compareTelemetry, filterTelemetry } from "@stack-stats/core";
 import { telemetryQuerySchema, telemetryEventSchema, type TelemetryData, type TelemetryQuery } from "@stack-stats/protocol";
 import { LocalSessionStore } from "./local-store.js";
@@ -23,9 +23,14 @@ import { ProvenanceLedger } from "./provenance-ledger.js";
 import { AgentInbox, agentHome } from "./agent-inbox.js";
 import { ExternalChangeObserver } from "./external-observer.js";
 import { formatAgentActivity } from "./agent-report.js";
-import { agentAdapters, hookTools, type HookCommand } from "./agent-adapters.js";
+import { hookTools, type HookTool } from "./agent-adapters.js";
+import { AgentIntegrationManager, EDITOR_EXTENSIONS, IntegrationError, connectPrompt, disconnectPrompt, statusSummary, type ChangePreview, type IntegrationStatus } from "./agent-integrations.js";
+import { EXTERNAL_CHANGES_MESSAGE } from "./sidebar-model.js";
 
 const CHECKPOINT_MS = 15_000;
+/** The hook fails closed on stale state; refresh it well inside that window. */
+const AGENT_STATE_REFRESH_MS = 6 * 3_600_000;
+const CONNECTED_AT_KEY = "agentIntegrationsConnectedAt";
 let shutdown: (() => Promise<void>) | undefined;
 
 async function readConfig(): Promise<LocalConfig | undefined> {
@@ -95,6 +100,22 @@ export async function activate(context: vscode.ExtensionContext) {
   const ledger = new ProvenanceLedger(join(context.globalStorageUri.fsPath, "provenance-v1"), log);
   const inbox = new AgentInbox(agentHome());
   const bundledHook = join(context.extensionPath, "dist", "agent-hook.cjs");
+  const settingKeys: Record<HookTool, string> = { "claude-code": "agentIntegrations.claudeCode", codex: "agentIntegrations.codex" };
+  // One-click Connect/Disconnect owns both sides: the vendor hook entries and this
+  // setting. Status is derived from the vendor config, not from the setting alone.
+  const agents = new AgentIntegrationManager({ bundledHook, runtime: process.execPath,
+    enabled: (tool) => integrationSettings()[tool],
+    setEnabled: async (tool, on) => { await settings().update(settingKeys[tool], on, vscode.ConfigurationTarget.Global); },
+    syncState: () => syncAgentState(true),
+    editorExtension: (tool) => vscode.extensions.getExtension(EDITOR_EXTENSIONS[tool]) !== undefined,
+    connectedAt: (tool) => context.globalState.get<Partial<Record<HookTool, number>>>(CONNECTED_AT_KEY)?.[tool],
+    setConnectedAt: async (tool, at) => {
+      const next = { ...context.globalState.get<Partial<Record<HookTool, number>>>(CONNECTED_AT_KEY) };
+      if (at === undefined) delete next[tool]; else next[tool] = at;
+      await context.globalState.update(CONNECTED_AT_KEY, next);
+    } });
+  let agentStatuses: IntegrationStatus[] | undefined;
+  let agentStatusRequest = 0;
   // Agent/external provenance is local-only and never extends human sessions.
   const observer = new ExternalChangeObserver({ installationId, metadata, hash: (value) => hash(value, salt), policy: () => policy, ledger, inbox,
     collecting: () => enabled && !stopped, filesystem: () => settings().get("collectFilesystem", true),
@@ -108,7 +129,8 @@ export async function activate(context: vscode.ExtensionContext) {
     return {
       summary: history.summarize(localDateKey(Date.now(), timeZone), tracker.snapshot(), tracker.pending()),
       enabled, ready: history.ready, refreshing: history.refreshing, historyError: history.error || historyWarning,
-      storageError, idleMinutes, syncConfigured: config !== undefined, account: account.getState(), profileSync: profileSync.getState()
+      storageError, idleMinutes, syncConfigured: config !== undefined, account: account.getState(), profileSync: profileSync.getState(),
+      agents: { external: !enabled ? "paused" : settings().get("collectFilesystem", true) ? "tracked" : "off", integrations: agentStatuses }
     };
   }
   const sidebar = new StatsSidebar(uiState());
@@ -158,25 +180,29 @@ export async function activate(context: vscode.ExtensionContext) {
     return saves;
   }
 
-  /** The hook reads this file and writes nothing unless tracking is on and the
-   * user enabled that integration. No files are created before an opt-in. */
+  /** The hook reads this file and writes nothing unless tracking is on, the user
+   * connected that agent and the file is fresh. No files are created before an
+   * opt-in. Installing refreshes the hook, launcher and runtime hint (the editor's
+   * own runtime, so no system Node.js is required). */
+  let agentStateWrittenAt = 0;
   async function syncAgentState(install = false): Promise<void> {
     const integrations = integrationSettings();
     const any = hookTools.some((tool) => integrations[tool]);
     if (!any && !install && !(await inbox.exists())) return;
     try {
       await inbox.writeState({ stateVersion: 1, collecting: enabled, integrations, excludeFiles: settings().get<string[]>("excludeFiles", []).slice(0, 256), updatedAt: new Date().toISOString() });
-      if (any || install) await inbox.installHook(bundledHook);
+      agentStateWrittenAt = Date.now();
+      if (any || install) await agents.installRuntime();
     } catch { log("Agent integration state could not be written; agent hooks will not record until this is fixed."); }
   }
-  async function hookCommand(script: string): Promise<HookCommand> {
-    for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-      if (!directory) continue;
-      const candidate = join(directory, process.platform === "win32" ? "node.exe" : "node");
-      try { await access(candidate, constants.X_OK); return { executable: candidate, script }; } catch { /* Try the next PATH entry. */ }
-    }
-    // The editor's own runtime can run the hook when Node.js is not installed.
-    return { executable: process.execPath, script, env: { ELECTRON_RUN_AS_NODE: "1" } };
+  /** Reads vendor configs only to find Stack Stats entries; the latest request wins. */
+  async function refreshAgents(): Promise<void> {
+    const request = ++agentStatusRequest;
+    try {
+      const statuses = await agents.statuses();
+      if (request === agentStatusRequest) agentStatuses = statuses;
+    } catch { log("Agent integration status could not be checked. Local tracking continues."); }
+    scheduleRefresh();
   }
 
   try {
@@ -190,6 +216,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   void loadHistory();
   void syncAgentState();
+  void refreshAgents();
   log("Session collector loaded. History contains metadata only; checkpoints run every 15 seconds.");
   if (!config) log("Daemon sync is not configured. Local history and all reports work. To enable CLI summaries, initialize the CLI and reload this window.");
   function coverage() {
@@ -225,7 +252,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.window.onDidChangeWindowState((state) => {
     tracker.breakInterval();
     // Reload other windows' durable snapshots on focus, never on each edit.
-    if (!stopped && state.focused) { tracker.expire(Date.now()); void loadHistory(); account.checkIfDue(); }
+    if (!stopped && state.focused) { tracker.expire(Date.now()); void loadHistory(); account.checkIfDue(); void refreshAgents(); }
   }));
   context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => { metadata.close(document); collector.close(document.uri.toString()); }));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { metadata.clear(); tracker.breakInterval(); workflows.reset(); git.reset(); }));
@@ -233,7 +260,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!event.affectsConfiguration("stackStats")) return;
     if (event.affectsConfiguration("stackStats.agentIntegrations")) {
       // Opting in/out of agent hooks must not interrupt the human session.
-      void syncAgentState();
+      void syncAgentState().then(refreshAgents);
       if (!["enabled", "inactivityTimeoutMinutes", "excludeFiles", "excludeProjects", "includeProjectNames", "collectFilesystem", "collectGit", "collectWorkflows",
         "collectDiagnostics", "allowAttributionReports", "rawRetentionDays", "showStatusBar", "syncHourlyActivity"].some(key => event.affectsConfiguration(`stackStats.${key}`))) return;
     }
@@ -262,9 +289,9 @@ export async function activate(context: vscode.ExtensionContext) {
     refresh();
   }));
 
-  function command(name: string, action: () => void | Promise<void>): void {
-    context.subscriptions.push(vscode.commands.registerCommand(`stackStats.${name}`, async () => {
-      try { await action(); } catch { log("The command could not complete. Check local storage permissions; existing history was preserved."); output.show(true); }
+  function command(name: string, action: (...args: unknown[]) => void | Promise<void>): void {
+    context.subscriptions.push(vscode.commands.registerCommand(`stackStats.${name}`, async (...args: unknown[]) => {
+      try { await action(...args); } catch { log("The command could not complete. Check local storage permissions; existing history was preserved."); output.show(true); }
     }));
   }
   const show = (text: string) => { output.appendLine(`\n${text}\n`); output.show(true); };
@@ -330,34 +357,142 @@ export async function activate(context: vscode.ExtensionContext) {
       { from: previousFrom.toISOString(), to: from.toISOString() }), null, 2));
   });
   command("showAgentActivity", async () => {
-    await checkpoint(); await observer.flush(true);
-    show(formatAgentActivity(await observer.summary(todayRange()), { integrations: integrationSettings(), filesystem: settings().get("collectFilesystem", true),
-      collecting: enabled, now: Date.now(), title: "Agent & external activity today" }));
+    await checkpoint(); await observer.flush(true); await refreshAgents();
+    const now = Date.now();
+    const connections = Object.fromEntries((agentStatuses ?? []).map((status) => [status.tool, statusSummary(status, now)])) as Partial<Record<HookTool, string>>;
+    show(formatAgentActivity(await observer.summary(todayRange()), { integrations: integrationSettings(), connections, filesystem: settings().get("collectFilesystem", true),
+      collecting: enabled, now, title: "Agent & external activity today" }));
   });
+
+  // ── Agent integrations: one click + explicit confirmation ──────────────────────
+  const toolArgument = (value: unknown): HookTool | undefined => hookTools.find((tool) => tool === value);
+  async function pickAgent(value: unknown, placeHolder: string, eligible: (status: IntegrationStatus) => boolean, none: string): Promise<HookTool | undefined> {
+    const tool = toolArgument(value);
+    if (tool) return tool;
+    await refreshAgents();
+    const candidates = (agentStatuses ?? []).filter(eligible);
+    if (!candidates.length) { void vscode.window.showInformationMessage(none); return undefined; }
+    const picked = await vscode.window.showQuickPick(candidates.map((status) => ({ label: status.displayName, description: statusSummary(status), tool: status.tool })), { placeHolder });
+    return picked?.tool;
+  }
+  async function reportIntegrationError(tool: HookTool, error: unknown, prefix: string): Promise<void> {
+    const known = error instanceof IntegrationError;
+    // Codes only: messages can carry paths, and vendor settings can hold secrets.
+    log(`Agent integration ${tool}: ${known ? error.code : (error as NodeJS.ErrnoException | undefined)?.code ?? "unexpected error"}.`);
+    const open = known && (error.code === "malformed" || error.code === "structure") ? "Open File" : undefined;
+    const choice = await vscode.window.showErrorMessage(`${prefix} ${known ? error.message : "An unexpected error occurred; see the Stack Stats output."}`, ...(open ? [open] : []));
+    if (open && choice === open) await vscode.window.showTextDocument(vscode.Uri.file(agents.paths.config[tool]));
+  }
+  async function connectAgent(value?: unknown): Promise<void> {
+    const tool = await pickAgent(value, "Connect an agent to label its activity", (status) => status.state !== "connected" && status.state !== "not_detected",
+      "No agents are waiting to be connected. Supported: Claude Code and Codex.");
+    if (!tool) return;
+    const name = agents.displayName(tool);
+    const status = await agents.status(tool);
+    if (status.state === "not_detected") { void vscode.window.showInformationMessage(`${name} wasn't found on this device. Install ${name}, then connect it here. ${EXTERNAL_CHANGES_MESSAGE}`); return; }
+    let preview: ChangePreview;
+    try { preview = await agents.previewConnect(tool); } catch (error) { await reportIntegrationError(tool, error, `Couldn't connect ${name}.`); return; }
+    if (preview.changed) {
+      const prompt = connectPrompt(preview, name);
+      if (await vscode.window.showInformationMessage(prompt.message, { modal: true, detail: prompt.detail }, prompt.confirm) !== prompt.confirm) return;
+    } else if (status.state === "connected") { void vscode.window.showInformationMessage(`${name} is already connected.`); return; }
+    try {
+      const result = await agents.connect(tool);
+      await refreshAgents();
+      if (result.state !== "connected") { void vscode.window.showWarningMessage(`${name}: ${result.problem ?? "the connection could not be verified."}`); return; }
+      void vscode.window.showInformationMessage(tool === "codex"
+        ? "Codex hooks are installed. Start Codex and approve the Stack Stats hooks when it asks; its activity is labeled after that."
+        : `${name} is connected. New ${name} sessions are labeled automatically; restart a session that is already open to include it.`);
+    } catch (error) { await refreshAgents(); await reportIntegrationError(tool, error, `Couldn't connect ${name}.`); }
+  }
+  async function disconnectAgent(value?: unknown): Promise<void> {
+    const tool = await pickAgent(value, "Disconnect an agent", (status) => status.enabled || status.hooks.owned > 0, "No agent integrations are connected.");
+    if (!tool) return;
+    const name = agents.displayName(tool);
+    let prompt: { message: string; detail: string; confirm: string };
+    try { prompt = disconnectPrompt(await agents.previewDisconnect(tool), name); } catch (error) {
+      prompt = { message: `Disconnect ${name}?`, confirm: "Disconnect", detail: `Stack Stats will stop labeling ${name} activity. ${error instanceof IntegrationError ? error.message.replace(/ Nothing was changed\..*$/, "") : "Its settings can't be read right now"}, so any Stack Stats hooks there stay until the file can be edited.\n\nPast activity stays in your local history. External changes are still tracked automatically.` };
+    }
+    if (await vscode.window.showInformationMessage(prompt.message, { modal: true, detail: prompt.detail }, prompt.confirm) !== prompt.confirm) return;
+    try {
+      await agents.disconnect(tool);
+      await refreshAgents();
+      void vscode.window.showInformationMessage(`${name} is disconnected. ${EXTERNAL_CHANGES_MESSAGE}`);
+    } catch (error) { await refreshAgents(); await reportIntegrationError(tool, error, `Stack Stats stopped labeling ${name}, but couldn't remove its hooks.`); }
+  }
+  function showManualSetup(): void {
+    show(["Stack Stats — Manual agent integration setup (advanced)", "",
+      "Most people should use Connect in the Stack Stats Agents view instead: it makes these exact changes after asking, and Disconnect removes them.",
+      "Use this only when the tool's settings are managed elsewhere (dotfiles, MDM) and Stack Stats should not edit them.", "",
+      "1. Run Connect once, or turn on the matching stackStats.agentIntegrations setting, so the hook runtime is installed.",
+      "2. Merge the entries below into the tool's configuration without removing anything else.", "",
+      `Hook runtime: ${agents.paths.hooks} (launcher, hook and runtime hint; no system Node.js needed)`,
+      ...hookTools.flatMap((tool) => {
+        const setup = agents.manualSetup(tool);
+        return ["", `── ${agents.displayName(tool)} → ${setup.file}`, setup.snippet];
+      }), "",
+      "The hooks report metadata only: no prompts, responses, source code, commands or command output. UserPromptSubmit is deliberately not used because its payload contains your prompt.",
+      "Codex asks you to approve new hooks before they run. Agent time is reported separately and never counts as coding time."].join("\n"));
+  }
+  async function manageAgents(): Promise<void> {
+    await refreshAgents();
+    type Item = vscode.QuickPickItem & { run?: () => unknown };
+    const items: Item[] = [{ label: "$(eye) External changes", description: settings().get("collectFilesystem", true) && enabled ? "Tracked automatically" : "Paused or off", detail: EXTERNAL_CHANGES_MESSAGE }];
+    for (const status of agentStatuses ?? []) {
+      const summary = statusSummary(status);
+      if (status.state === "not_detected") items.push({ label: `$(circle-slash) ${status.displayName}`, description: summary, detail: `Install ${status.displayName} to connect it.` });
+      else if (status.state === "available") items.push({ label: `$(plug) Connect ${status.displayName}`, description: summary, detail: "Optional. Labels its changes and runs. Stack Stats shows what it will change and asks first.", run: () => connectAgent(status.tool) });
+      else {
+        if (status.state !== "connected") items.push({ label: `$(tools) Repair ${status.displayName}`, description: summary, run: () => connectAgent(status.tool) });
+        if (status.enabled || status.hooks.owned > 0) items.push({ label: `$(debug-disconnect) Disconnect ${status.displayName}`, description: status.state === "connected" ? summary : undefined, run: () => disconnectAgent(status.tool) });
+      }
+    }
+    items.push({ label: "", kind: vscode.QuickPickItemKind.Separator }, { label: "$(output) Show agent activity", run: () => vscode.commands.executeCommand("stackStats.showAgentActivity") },
+      { label: "$(gear) Advanced: show manual setup", run: showManualSetup });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: "Agent integrations are optional. Connect an agent to label its changes." });
+    await picked?.run?.();
+  }
+  command("manageAgentIntegrations", manageAgents);
+  command("connectAgent", connectAgent);
+  command("disconnectAgent", disconnectAgent);
+  command("disconnectAllAgents", async () => {
+    await refreshAgents();
+    const targets = (agentStatuses ?? []).filter((status) => status.enabled || status.hooks.owned > 0);
+    if (!targets.length) { void vscode.window.showInformationMessage("No agent integrations are connected."); return; }
+    const names = targets.map((status) => status.displayName).join(" and ");
+    if (await vscode.window.showInformationMessage(`Disconnect ${names}?`, { modal: true, detail: "Stack Stats will remove only its own hooks from each tool's settings and stop labeling agent activity. Other settings and hooks stay as they are.\n\nPast activity stays in your local history. External changes are still tracked automatically.\n\nRun this before uninstalling Stack Stats so no hooks are left behind." }, "Disconnect All") !== "Disconnect All") return;
+    const failed: string[] = [];
+    for (const { tool } of targets) {
+      try { await agents.disconnect(tool); } catch (error) { failed.push(`${agents.displayName(tool)}: ${error instanceof IntegrationError ? error.message : "unexpected error"}`); }
+    }
+    await refreshAgents();
+    if (failed.length) void vscode.window.showErrorMessage(`Stack Stats stopped labeling agent activity, but couldn't remove every hook. ${failed.join(" ")}`);
+    else void vscode.window.showInformationMessage(`Disconnected ${names}. ${EXTERNAL_CHANGES_MESSAGE}`);
+  });
+  command("verifyAgentIntegrations", async () => {
+    await refreshAgents();
+    // Checks configuration, hook runtime and the last received signal; never runs an agent.
+    void vscode.window.showInformationMessage((agentStatuses ?? []).map((status) => `${status.displayName}: ${statusSummary(status)}.`).join(" ") || "Agent integration status is unavailable.");
+  });
+  command("showAgentIntegrationSetup", showManualSetup);
+  // Pre-9E.1 command ID, kept for keybindings and scripts: installs the hook runtime
+  // (as before) and shows the advanced setup without opening a picker.
   command("setupAgentIntegrations", async () => {
     await syncAgentState(true);
-    const hook = await hookCommand(await inbox.installHook(bundledHook));
-    const enabledTools = integrationSettings();
-    show([`Stack Stats — Agent integrations (optional, local only)`, "",
-      "Stack Stats never edits Claude Code or Codex configuration. To opt in:",
-      "  1. Enable stackStats.agentIntegrations.claudeCode and/or stackStats.agentIntegrations.codex.",
-      "  2. Add the matching hook configuration below to that tool.",
-      "  3. Run Stack Stats: Show Agent Activity after an agent turn to verify signals arrived.", "",
-      `Hook script (version-stable copy): ${hook.script}`,
-      `Agent inbox: ${inbox.paths.records} (transient; records are deleted once ingested)`,
-      ...hookTools.flatMap((tool) => {
-        const setup = agentAdapters[tool].setup(hook);
-        return ["", `── ${setup.displayName}: ${enabledTools[tool] ? "enabled in Stack Stats" : "not enabled in Stack Stats (the hook writes nothing until you enable it)"}`,
-          `Add to ${setup.file}:`, setup.snippet, ...setup.notes.map((note) => `• ${note}`)];
-      }),
-      "", "Remove the hook entries from the tool's settings (or turn the Stack Stats setting off) to stop. Agent runtime is reported separately and never counts as coding time."].join("\n"));
+    showManualSetup();
+    void vscode.window.showInformationMessage("Connect agents with one click from the Stack Stats Agents view.", "Manage Agent Integrations")
+      .then((choice) => { if (choice) void vscode.commands.executeCommand("stackStats.manageAgentIntegrations"); });
   });
-  command("showPrivacy", () => show(`Telemetry privacy\n\nNo source, prompts, command lines, debug configuration, diagnostic messages, commit messages, authors or remote URLs are collected.\nAI/manual attribution requires explicit reports and is never inferred from editor brand.\nAgent integrations (off by default) keep hashed run IDs, tool kinds, durations, salted file IDs and diff-line counts locally; prompts, responses, commands and file contents are never stored. Agent and external-change records are local-only and are not synced.\nExcluded files: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []).length} custom pattern(s) plus built-in exclusions.\nExcluded projects: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []).length} pattern(s).\nTelemetry journal: ${telemetry.journal.directory}\n${telemetry.state}`));
+  command("showPrivacy", () => show(`Telemetry privacy\n\nNo source, prompts, command lines, debug configuration, diagnostic messages, commit messages, authors or remote URLs are collected.\nAI/manual attribution requires explicit reports and is never inferred from editor brand.\nExternal changes are tracked automatically with the writer unknown. Connected agents (optional; Connect in the Agents view) add hashed run IDs, tool kinds, durations, salted file IDs and diff-line counts locally; prompts, responses, commands and file contents are never stored. Agent and external-change records are local-only and are not synced.\nExcluded files: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeFiles", []).length} custom pattern(s) plus built-in exclusions.\nExcluded projects: ${vscode.workspace.getConfiguration("stackStats").get<string[]>("excludeProjects", []).length} pattern(s).\nTelemetry journal: ${telemetry.journal.directory}\n${telemetry.state}`));
 
   // A single low-frequency timer handles expiry, persistence, delivery and status.
   // HTTP retries run separately so an offline daemon cannot block checkpointing.
+  let ticks = 0;
   const timer = setInterval(() => {
     tracker.expire(Date.now());
+    // Agent status reads two small config files; once a minute is plenty.
+    if (++ticks % 4 === 0) void refreshAgents();
+    if (Date.now() - agentStateWrittenAt > AGENT_STATE_REFRESH_MS && hookTools.some((tool) => integrationSettings()[tool])) void syncAgentState();
     account.checkIfDue();
     void checkpoint().then(() => { void delivery.sync().then(refresh); void profileSync.tick(); refresh(); });
     void telemetry.sync();

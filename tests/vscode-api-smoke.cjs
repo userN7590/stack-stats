@@ -126,7 +126,7 @@ exports.run = async () => {
     const commands = await vscode.commands.getCommands(true);
     for (const { command } of extension.packageJSON.contributes.commands) assert(commands.includes(command), `${command} registered`);
     const views = extension.packageJSON.contributes.views.stackStats;
-    assert.deepEqual(views.map(view => view.name), ["Activity", "Account"], "Two focused native sidebar panels");
+    assert.deepEqual(views.map(view => view.name), ["Activity", "Agents", "Account"], "Three focused native sidebar panels");
     for (const section of ["currentSession", "thisWeek", "languages", "projects", "streak"]) {
       assert(commands.includes(`stackStats.${section}.focus`), "Legacy focus command preserved");
       await vscode.commands.executeCommand(`stackStats.${section}.focus`);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { countDiffLines, countReloadDiffLines } from "@stack-stats/core";
 import { agentInboxRecordSchema } from "@stack-stats/protocol";
 import { claudeCodeAdapter, codexAdapter, isVcsCommand, parseApplyPatch, vendorHash } from "../apps/vscode-extension/src/agent-adapters.js";
+import { managedHooks } from "../apps/vscode-extension/src/agent-integrations.js";
 
 // Field names and shapes mirror payloads captured from real Claude Code 2.1.284 and
 // Codex 0.155 runs (values here are synthetic).
@@ -60,14 +61,12 @@ describe("Claude Code hook adapter", () => {
     expect(leaks(bash)).toEqual([]);
   });
 
-  it("generates a settings snippet without prompt-bearing hooks", () => {
-    const setup = claudeCodeAdapter.setup({ executable: "/usr/local/bin/node", script: "/home/me/.stackstats/hooks/hook.cjs" });
-    const hooks = JSON.parse(setup.snippet).hooks;
-    expect(Object.keys(hooks)).toEqual(["SessionStart", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "SessionEnd"]);
-    expect(hooks.PostToolUse[0]).toEqual({ matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit", hooks: [{ type: "command", command: "/usr/local/bin/node", args: ["/home/me/.stackstats/hooks/hook.cjs", "claude-code"], timeout: 5 }] });
-    expect(setup.snippet).not.toContain("UserPromptSubmit");
-    const electron = JSON.parse(claudeCodeAdapter.setup({ executable: "/Applications/Code Helper", script: "/h.cjs", env: { ELECTRON_RUN_AS_NODE: "1" } }).snippet);
-    expect(electron.hooks.Stop[0].hooks[0].command).toBe('ELECTRON_RUN_AS_NODE=1 "/Applications/Code Helper" "/h.cjs" claude-code');
+  it("manages hook entries without prompt-bearing events or a machine-specific Node path", () => {
+    const hooks = managedHooks("claude-code", { platform: "darwin", home: "/Users/me", env: {} });
+    expect(hooks.map((hook) => hook.event)).toEqual(["SessionStart", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "SessionEnd"]);
+    expect(hooks[1]).toEqual({ event: "PostToolUse", matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit",
+      handler: { type: "command", command: "/bin/sh", args: ["/Users/me/.stackstats/hooks/stack-stats-hook-v1.sh", "claude-code"], timeout: 5 } });
+    expect(JSON.stringify(hooks)).not.toMatch(/UserPromptSubmit|node/);
   });
 });
 
@@ -97,9 +96,10 @@ describe("Codex hook adapter", () => {
     expect(codexAdapter.normalize(codex("Interrupt"), at, id)).toMatchObject({ signal: "interrupted", endReason: "interrupted" });
     expect(codexAdapter.normalize(codex("SessionEnd", { reason: "other", turn_id: undefined }), at, id)).toMatchObject({ signal: "session_ended" });
     expect(codexAdapter.normalize(codex("UserPromptSubmit", { prompt: secret.prompt }), at, id)).toBeUndefined();
-    const hooks = JSON.parse(codexAdapter.setup({ executable: "/usr/bin/node", script: "/h.cjs" }).snippet).hooks;
-    expect(hooks.PreToolUse[0]).toEqual({ matcher: "^Bash$", hooks: [{ type: "command", command: '"/usr/bin/node" "/h.cjs" codex', timeout: 5 }] });
-    expect(Object.keys(hooks)).not.toContain("UserPromptSubmit");
+    const hooks = managedHooks("codex", { platform: "linux", home: "/home/me", env: {} });
+    expect(hooks.find((hook) => hook.event === "PreToolUse")).toEqual({ event: "PreToolUse", matcher: "^Bash$",
+      handler: { type: "command", command: "/bin/sh '/home/me/.stackstats/hooks/stack-stats-hook-v1.sh' codex", timeout: 5 } });
+    expect(hooks.map((hook) => hook.event)).not.toContain("UserPromptSubmit");
   });
 
   it("parses patch headers, moves and deletions without reading content semantics", () => {

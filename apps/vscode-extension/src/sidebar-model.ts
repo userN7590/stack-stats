@@ -1,6 +1,6 @@
 import type { SessionStatistics } from "@stack-stats/core";
 import type { SidebarSummary } from "./stats-model.js";
-import { formatDuration } from "./presentation.js";
+import { formatAgo, formatDuration } from "./presentation.js";
 import type { ProfileSyncState } from "./profile-sync.js";
 import type { AccountState } from "./account-service.js";
 
@@ -17,6 +17,23 @@ export interface SidebarState {
   syncConfigured: boolean;
   account?: AccountState;
   profileSync?: ProfileSyncState;
+  agents?: AgentsPanelState;
+}
+/** Normalized integration status for the Agents panel; vendor config never reaches the UI. */
+export interface AgentIntegrationView {
+  tool: string;
+  displayName: string;
+  state: "not_detected" | "available" | "connected" | "needs_attention" | "error";
+  lastSignalAt?: number;
+  verified: boolean;
+  approvalPending: boolean;
+  problem?: string;
+}
+export interface AgentsPanelState {
+  /** Zero-config external-change observation (tracking + stackStats.collectFilesystem). */
+  external: "tracked" | "paused" | "off";
+  /** Undefined while the first status check runs. */
+  integrations?: AgentIntegrationView[];
 }
 export interface StatsRow {
   id: string;
@@ -25,6 +42,7 @@ export interface StatsRow {
   tooltip?: string;
   icon?: string;
   command?: string;
+  arguments?: unknown[];
   children?: StatsRow[];
   expanded?: boolean;
 }
@@ -137,8 +155,8 @@ export function profileSyncRows(sync: ProfileSyncState): StatsRow[] {
   ];
 }
 
-/** Two native panels; the original section identifiers remain command targets. */
-export const nativeSidebarViews = ["today", "trackingStatus"] as const;
+/** Native panels; the original section identifiers remain command targets. */
+export const nativeSidebarViews = ["today", "agents", "trackingStatus"] as const;
 export type NativeSidebarView = typeof nativeSidebarViews[number];
 
 function compactMetrics(stats: SessionStatistics, sessions = true): StatsRow[] {
@@ -157,6 +175,7 @@ const languageNames: Record<string, string> = {
 
 export function rowsForPanel(view: NativeSidebarView, state: SidebarState): StatsRow[] {
   if (view === "trackingStatus") return connectionRows(state);
+  if (view === "agents") return agentRows(state);
   const { summary } = state;
   const current: StatsRow = {
     ...row("currentSession", "Current session", !state.enabled ? "Paused" : summary.current ? formatDuration(summary.current.activeMs) : "Ready to code", estimate, !state.enabled ? "debug-pause" : "pulse"),
@@ -219,4 +238,59 @@ function connectionRows(state: SidebarState): StatsRow[] {
         }]
     }
   ];
+}
+
+export const EXTERNAL_CHANGES_MESSAGE = "External changes are tracked automatically. Connect an agent to label them.";
+
+/** Agent integrations are optional: external changes are observed with no setup, and
+ * connecting an agent only adds labels. Each row carries at most the actions that
+ * apply; no vendor or hook vocabulary is shown. */
+export function agentRows(state: SidebarState, now = Date.now()): StatsRow[] {
+  const agents = state.agents ?? { external: state.enabled ? "tracked" : "paused" };
+  const externalLabels = { tracked: "Tracked automatically", paused: "Paused", off: "Off in settings" };
+  const rows: StatsRow[] = [row("external", "External changes", externalLabels[agents.external],
+    `${EXTERNAL_CHANGES_MESSAGE} Changes made outside the editor, by agents, scripts or checkouts, are recorded on this device with the writer unknown and never count as coding time.`, "eye")];
+  if (!agents.integrations) return [...rows, row("checking", "Checking for agents…", undefined, undefined, "loading~spin")];
+  for (const agent of agents.integrations) {
+    const action = (id: string, label: string, command: string, icon: string): StatsRow => ({ id, label, command, arguments: [agent.tool], icon });
+    const disconnect = action("disconnect", "Disconnect", "stackStats.disconnectAgent", "debug-disconnect");
+    switch (agent.state) {
+      case "not_detected":
+        rows.push(row(agent.tool, agent.displayName, "Not detected", `${agent.displayName} wasn't found on this device. External changes are still tracked.`, "circle-slash"));
+        break;
+      case "available":
+        rows.push({ ...row(agent.tool, agent.displayName, "Not connected", `Optional. Connect to label ${agent.displayName}'s changes and runs. Stack Stats asks before changing anything.`, "plug"),
+          expanded: true, children: [action("connect", `Connect ${agent.displayName}`, "stackStats.connectAgent", "plug")] });
+        break;
+      case "connected": {
+        const activity = agent.lastSignalAt !== undefined ? formatAgo(agent.lastSignalAt, now) : "No activity received yet";
+        rows.push({ ...row(agent.tool, agent.displayName, agent.approvalPending ? `Approve in ${agent.displayName}` : agent.verified ? `Connected · ${activity}` : "Connected",
+          agent.approvalPending ? `${agent.displayName} runs new hooks only after you approve them.` : `Stack Stats labels ${agent.displayName}'s changes and runs on this device.`, agent.approvalPending ? "info" : "pass"),
+          expanded: true, children: [
+            row("activity", "Last activity", activity, agent.verified ? "Time of the latest signal from this agent." : `Waiting for the first signal. Use ${agent.displayName} as usual; no test run is needed.`, "pulse"),
+            ...(agent.approvalPending ? [row("approve", `Open ${agent.displayName} and approve the Stack Stats hooks`, undefined,
+              `${agent.displayName} asks you to review new hooks before they run. Approve the Stack Stats entries when it lists them; activity then appears here after your next ${agent.displayName} turn.`, "shield")] : []),
+            disconnect] });
+        break;
+      }
+      case "needs_attention":
+        rows.push({ ...row(agent.tool, agent.displayName, "Needs attention", agent.problem, "warning"), expanded: true,
+          children: [row("problem", agent.problem ?? "Connection needs repair", undefined, agent.problem, "info"), action("repair", "Repair connection", "stackStats.connectAgent", "tools"), disconnect] });
+        break;
+      case "error":
+        rows.push({ ...row(agent.tool, agent.displayName, "Can't read its settings", agent.problem, "warning"), expanded: true,
+          children: [row("problem", agent.problem ?? "Settings could not be read", undefined, agent.problem, "info"),
+            { id: "verify", label: "Check again", command: "stackStats.verifyAgentIntegrations", icon: "refresh" }] });
+    }
+  }
+  rows.push({ id: "activity", label: "Show agent activity", command: "stackStats.showAgentActivity", icon: "output", tooltip: "Agent runs, agent-labeled changes and external changes, side by side with (never inside) your coding time." });
+  return rows;
+}
+
+export function agentsDescription(agents?: AgentsPanelState): string {
+  const list = agents?.integrations ?? [];
+  if (list.some((agent) => agent.state === "needs_attention" || agent.state === "error")) return "Needs attention";
+  if (list.some((agent) => agent.approvalPending)) return "Approval needed";
+  const connected = list.filter((agent) => agent.state === "connected").length;
+  return connected ? `${connected} connected` : "Optional";
 }

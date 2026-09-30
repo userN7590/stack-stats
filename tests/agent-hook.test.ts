@@ -16,7 +16,7 @@ function home(state?: unknown) {
   if (state !== undefined) { mkdirSync(inboxPaths(directory).directory, { recursive: true }); writeFileSync(inboxPaths(directory).state, typeof state === "string" ? state : JSON.stringify(state)); }
   return directory;
 }
-const state = (patch: Record<string, unknown> = {}) => ({ stateVersion: 1, collecting: true, integrations: { "claude-code": true, codex: false }, excludeFiles: [], updatedAt: "2026-09-29T12:00:00.000Z", ...patch });
+const state = (patch: Record<string, unknown> = {}) => ({ stateVersion: 1, collecting: true, integrations: { "claude-code": true, codex: false }, excludeFiles: [], updatedAt: new Date().toISOString(), ...patch });
 function run(directory: string, input: string, tool = "claude-code") {
   const result = spawnSync(process.execPath, ["--import", "tsx", hook, tool], { input, env: { ...process.env, STACK_STATS_HOME: directory }, encoding: "utf8", timeout: 20_000 });
   return { status: result.status, stdout: result.stdout, records: (() => { try { return readdirSync(inboxPaths(directory).records).filter((name) => name.endsWith(".json")); } catch { return []; } })() };

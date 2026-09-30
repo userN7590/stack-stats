@@ -62,8 +62,35 @@
         "title": "Stack Stats: Show Agent Activity"
       },
       {
+        "command": "stackStats.manageAgentIntegrations",
+        "title": "Stack Stats: Manage Agent Integrations",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "stackStats.connectAgent",
+        "title": "Stack Stats: Connect Agent…",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "stackStats.disconnectAgent",
+        "title": "Stack Stats: Disconnect Agent…"
+      },
+      {
+        "command": "stackStats.disconnectAllAgents",
+        "title": "Stack Stats: Disconnect All Agent Integrations"
+      },
+      {
+        "command": "stackStats.verifyAgentIntegrations",
+        "title": "Stack Stats: Verify Agent Integrations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "stackStats.showAgentIntegrationSetup",
+        "title": "Stack Stats: Advanced: Show Manual Agent Integration Setup"
+      },
+      {
         "command": "stackStats.setupAgentIntegrations",
-        "title": "Stack Stats: Set Up Agent Integrations"
+        "title": "Stack Stats: Set Up Agent Integrations (Legacy)"
       },
       {
         "command": "stackStats.refreshStats",
@@ -136,7 +163,7 @@
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "Observe filesystem changes in eligible workspaces: coalesced notification counts plus local-only reconciled external-change records (open-document reloads supply diff lines). Writer identity stays unknown unless an agent integration reports it. External changes never count as coding time."
+          "description": "Observe filesystem changes in eligible workspaces automatically, with no setup: coalesced notification counts plus local-only reconciled external-change records (open-document reloads supply diff lines). The writer stays unknown unless a connected agent reports it. External changes never count as coding time."
         },
         "stackStats.collectGit": {
           "type": "boolean",
@@ -166,13 +193,15 @@
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Accept local signals from the Stack Stats Claude Code hook (see Set Up Agent Integrations). Records agent runs and agent-reported file changes as metadata only: no prompts, responses, commands or file contents. Local only; never synced. Agent runtime never counts as coding time."
+          "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
+          "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Claude Code hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
         },
         "stackStats.agentIntegrations.codex": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "Accept local signals from the Stack Stats Codex hook (see Set Up Agent Integrations). Records agent runs and agent-reported file changes as metadata only: no prompts, responses, commands or file contents. Local only; never synced. Agent runtime never counts as coding time."
+          "description": "Managed by Connect / Disconnect in the Stack Stats Agents view (Stack Stats: Manage Agent Integrations). While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; Disconnect removes it. Local only; never synced. Agent time never counts as coding time.",
+          "markdownDescription": "Managed by **Connect / Disconnect** in the Stack Stats **Agents** view ([Manage Agent Integrations](command:stackStats.manageAgentIntegrations)); you normally never change this directly. While on, Stack Stats accepts signals from its Codex hook: agent runs and agent-reported file changes as metadata only, with no prompts, responses, commands or file contents. Turning this off pauses labeling without removing the hook; **Disconnect** removes it. Local only; never synced. Agent time never counts as coding time."
         },
         "stackStats.excludeFiles": {
           "type": "array",
@@ -240,6 +269,10 @@
           "name": "Activity"
         },
         {
+          "id": "stackStats.agents",
+          "name": "Agents"
+        },
+        {
           "id": "stackStats.trackingStatus",
           "name": "Account",
           "visibility": "collapsed"
@@ -279,6 +312,11 @@
           "group": "settings@3"
         },
         {
+          "command": "stackStats.manageAgentIntegrations",
+          "when": "view == stackStats.today",
+          "group": "settings@4"
+        },
+        {
           "command": "stackStats.openDashboard",
           "when": "view == stackStats.trackingStatus",
           "group": "account@1"
@@ -292,13 +330,45 @@
           "command": "stackStats.enableProfileSync",
           "when": "view == stackStats.trackingStatus",
           "group": "account@3"
+        },
+        {
+          "command": "stackStats.verifyAgentIntegrations",
+          "when": "view == stackStats.agents",
+          "group": "navigation@1"
+        },
+        {
+          "command": "stackStats.manageAgentIntegrations",
+          "when": "view == stackStats.agents",
+          "group": "agents@1"
+        },
+        {
+          "command": "stackStats.showAgentActivity",
+          "when": "view == stackStats.agents",
+          "group": "agents@2"
+        },
+        {
+          "command": "stackStats.disconnectAllAgents",
+          "when": "view == stackStats.agents",
+          "group": "agents@3"
+        },
+        {
+          "command": "stackStats.showAgentIntegrationSetup",
+          "when": "view == stackStats.agents",
+          "group": "advanced@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "stackStats.setupAgentIntegrations",
+          "when": "false"
         }
       ]
     }
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs && esbuild src/agent-hook.ts --bundle --platform=node --format=cjs --outfile=dist/agent-hook.cjs",
-    "package": "pnpm build && vsce package --no-dependencies --allow-missing-repository"
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs && esbuild src/agent-hook.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/agent-hook.cjs && esbuild src/uninstall.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/uninstall.cjs",
+    "package": "pnpm build && vsce package --no-dependencies --allow-missing-repository",
+    "vscode:uninstall": "node ./dist/uninstall.cjs"
   },
   "dependencies": {
     "@stack-stats/core": "workspace:*",
@@ -318,6 +388,7 @@
   "files": [
     "dist/extension.cjs",
     "dist/agent-hook.cjs",
+    "dist/uninstall.cjs",
     "resources/stack-stats.svg",
     "README.md",
     "LICENSE"

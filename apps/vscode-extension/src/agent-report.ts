@@ -8,20 +8,29 @@ const lines = (counters: { linesAdded: number; linesRemoved: number; deltaUnknow
   counters.events ? `diff lines +${n(counters.linesAdded)} / −${n(counters.linesRemoved)}${counters.deltaUnknown ? ` (${n(counters.deltaUnknown)} without line counts)` : ""}` : "";
 const ago = (iso: string | null, now: number) => iso ? `last signal ${formatDuration(Math.max(0, now - Date.parse(iso)))} ago` : "no signals yet";
 
-export interface AgentReportContext { integrations: Record<"claude-code" | "codex", boolean>; filesystem: boolean; collecting: boolean; now: number; title?: string }
+export interface AgentReportContext {
+  integrations: Record<"claude-code" | "codex", boolean>;
+  /** Connection status derived from the tools' real configuration, when available. */
+  connections?: Partial<Record<"claude-code" | "codex", string>>;
+  filesystem: boolean; collecting: boolean; now: number; title?: string;
+}
 
 /** Plain-text local inspection. Categories are listed side by side with their own
  * units; nothing is combined into an "AI-written" percentage. */
 export function formatAgentActivity(summary: AgentActivitySummary, context: AgentReportContext): string {
   const { agent, external, editor } = summary;
   const byTool = new Map(agent.byTool.map((entry) => [entry.tool, entry]));
-  const out: string[] = [`Stack Stats — ${context.title ?? "Agent & external activity"} (local only, never uploaded)`, ""];
+  const out: string[] = [`Stack Stats — ${context.title ?? "Agent & external activity"} (local only, never uploaded)`, "",
+    "External changes are tracked automatically. Connect an agent to label them. Human coding time is separate: agent runs and external changes never add to it.", ""];
   out.push("Sources");
+  out.push(`  External change observation: ${!context.collecting ? "paused" : context.filesystem ? "on, automatic (workspace watcher + open-document reloads)" : "off (stackStats.collectFilesystem)"}`);
   for (const tool of ["claude-code", "codex"] as const) {
     const entry = byTool.get(tool);
-    out.push(`  ${names[tool]} integration: ${context.integrations[tool] ? `enabled · ${ago(entry?.lastSignalAt ?? null, context.now)}` : "off (Set Up Agent Integrations)"}`);
+    const connection = context.connections?.[tool];
+    out.push(`  ${names[tool]}: ${connection ? `${connection}${context.integrations[tool] ? ` (${ago(entry?.lastSignalAt ?? null, context.now)} in this window's history)` : ""}`
+      : context.integrations[tool] ? `connected · ${ago(entry?.lastSignalAt ?? null, context.now)}` : "not connected (Stack Stats: Manage Agent Integrations)"}`);
   }
-  out.push(`  External change observation: ${!context.collecting ? "paused" : context.filesystem ? "on (workspace watcher + open-document reloads)" : "off (stackStats.collectFilesystem)"}`, "");
+  out.push("");
   out.push("Editor activity (definitions unchanged; agents never extend it)",
     `  Active coding time: ${formatDuration(editor.activeMs)}`,
     `  Editor edits: ${n(editor.edits)} · line boundaries +${n(editor.linesAdded)} / −${n(editor.linesRemoved)}`,

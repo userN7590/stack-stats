@@ -4,6 +4,8 @@ Stack Stats now sees work that agents and other tools do outside the VS Code edi
 
 Status: implemented and verified locally (see §18). Not committed, pushed or published.
 
+> **Setup superseded by [Phase 9E.1](PHASE-9E1-AGENT-INTEGRATIONS.md).** Users no longer copy hook JSON or enable settings by hand. **Connect** in the Agents panel adds the entries after confirmation, and **Disconnect** removes only them. Hook entries now run a version-stable launcher on the editor's own runtime instead of a machine-specific Node.js path. The manual snippet described below survives only as *Advanced: Show Manual Agent Integration Setup*. The telemetry model in this document is unchanged.
+
 ---
 
 ## 1. Audit: what Stack Stats captured before this phase
@@ -310,7 +312,7 @@ Enabling an integration does not enable sync or publication.
 
 | Risk | Mitigation |
 | --- | --- |
-| Revealing which AI vendor or employer tooling a developer uses | Local only; opt-in per tool; no auto-detection of installed agents |
+| Revealing which AI vendor or employer tooling a developer uses | Local only; opt-in per tool. Since 9E.1, installation *detection* (extension ID, config directory, CLI on PATH) runs locally and read-only, is shown only in the user's own sidebar and is never uploaded |
 | Work-schedule exposure | Run timestamps stay local; no upload |
 | Prompts / responses / transcripts | Prompt-bearing hooks not installed; `last_assistant_message`, `transcript_path`, `originalFile`, `content`, command text and output are ignored in the hook process; the schema has no field that could hold them |
 | Command history and secrets | Only a derived `vcs` boolean survives from shell commands |
@@ -387,7 +389,7 @@ Heap growth stayed at 10–480 KiB per scenario apart from the 1,000-file burst 
 ## 19. Known limitations
 
 - **Integration coverage.**
-  - Codex and Claude integrations need the user to add hook configuration (and to trust it, for Codex). Without it, agent writes are counted as unknown external changes.
+  - Codex and Claude integrations must be connected (one click since 9E.1; Codex additionally asks the user to approve the hooks). Without that, agent writes are counted as unknown external changes.
   - Hook-based agents running on a different machine from the extension host (e.g. agent on the host, workspace in a container) are not linked.
 - **Run and change semantics.**
   - Run start is a lower bound. Pure-chat turns are zero-length runs.
@@ -408,7 +410,7 @@ Heap growth stayed at 10–480 KiB per scenario apart from the 1,000-file burst 
 ## 20. Deferred work
 
 - **Opt-in and setup.**
-  - Opt-in UI flow that writes vendor hook configuration with consent (today: printed snippets).
+  - ~~Opt-in UI flow that writes vendor hook configuration with consent~~: done in Phase 9E.1.
   - Optional prompt-free turn-start signal if a vendor adds one; `UserPromptSubmit` stays excluded.
 - **More tools.** Copilot, Cursor (hooks), Windsurf, JetBrains AI, generic agents via the adapter interface. Cursor's in-editor edits need a provider API before they can be separated from typing.
 - **Separating tool edits from typing.** Whether save-participant edits should stop extending active time: a deliberate, versioned semantics change for later.
@@ -432,7 +434,7 @@ Heap growth stayed at 10–480 KiB per scenario apart from the 1,000-file burst 
 
 New commands:
 - **Stack Stats: Show Agent Activity** (also in the Activity view's "…" menu);
-- **Stack Stats: Set Up Agent Integrations**.
+- **Stack Stats: Set Up Agent Integrations** (9E.1: replaced by *Manage Agent Integrations*; kept as a hidden alias).
 
 New settings (default off):
 - `stackStats.agentIntegrations.claudeCode`;

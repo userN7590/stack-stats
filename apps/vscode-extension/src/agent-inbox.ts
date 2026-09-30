@@ -13,6 +13,10 @@ import { exclusive } from "./exclusive.js";
 export const agentHome = (env: NodeJS.ProcessEnv = process.env) => env.STACK_STATS_HOME ?? join(homedir(), ".stackstats");
 export const AGENT_INBOX_MAX_RECORDS = 5_000;
 export const AGENT_INBOX_MAX_AGE_MS = 14 * 86_400_000;
+/** The hook fails closed on a state file this old: an uninstalled or long-closed
+ * extension stops receiving records instead of accumulating them. The extension
+ * rewrites the state on activation and every few hours while open. */
+export const AGENT_STATE_MAX_AGE_MS = 30 * 86_400_000;
 export const HOOK_SCRIPT_NAME = "stack-stats-agent-hook-v1.cjs";
 const RECORD_NAME = /^(\d{13})-([a-f0-9-]{36})\.json$/;
 
@@ -46,6 +50,29 @@ export function writeInboxRecord(home: string, record: AgentInboxRecord): "writt
   writeSmall(join(paths.records, `${String(Date.parse(record.observedAt)).padStart(13, "0")}-${record.recordId}.json`), text);
   return "written";
 }
+/** Used by the `vscode:uninstall` hook: remaining vendor entries become inert (the
+ * launcher's pre-check exits before starting a runtime). Vendor files are untouched. */
+export function pauseAgentHooks(home: string): boolean {
+  const state = readIntegrationState(home);
+  if (!state?.collecting) return false;
+  writeSmall(inboxPaths(home).state, JSON.stringify(agentIntegrationStateSchema.parse({ ...state, collecting: false, updatedAt: new Date().toISOString() })));
+  return true;
+}
+
+/** One timestamp per tool (no history): the time of the latest accepted hook signal.
+ * It lets the integration UI show "Last activity" and verify a connection even when
+ * the signal belongs to a workspace this window does not claim. */
+const signalPath = (home: string, tool: AgentTool) => join(inboxPaths(home).directory, `last-signal-${tool}`);
+export function markSignal(home: string, tool: AgentTool, at: number): void {
+  try { writeSmall(signalPath(home, tool), String(at)); } catch { /* Status only; never fail the hook. */ }
+}
+export async function readSignal(home: string, tool: AgentTool): Promise<number | undefined> {
+  try {
+    const at = Number((await readFile(signalPath(home, tool), "utf8")).trim());
+    return Number.isSafeInteger(at) && at > 0 ? at : undefined;
+  } catch { return undefined; }
+}
+
 function writeSmall(path: string, text: string) {
   const temporary = `${path}.${randomUUID()}.tmp`;
   const handle = openSync(temporary, "wx", 0o600);

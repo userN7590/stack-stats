@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { rowsForPanel, nativeSidebarViews, sidebarViews, statusBarPresentation, type SidebarState, type SidebarView, type NativeSidebarView, type StatsRow } from "./sidebar-model.js";
+import { agentsDescription, rowsForPanel, nativeSidebarViews, sidebarViews, statusBarPresentation, type SidebarState, type SidebarView, type NativeSidebarView, type StatsRow } from "./sidebar-model.js";
 
 class StatsProvider implements vscode.TreeDataProvider<StatsRow>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<StatsRow | undefined>();
@@ -37,7 +37,7 @@ class StatsProvider implements vscode.TreeDataProvider<StatsRow>, vscode.Disposa
     item.tooltip = row.tooltip ?? `${row.label}${row.description ? `: ${row.description}` : ""}`;
     item.accessibilityInformation = { label: `${row.label}${row.description ? `: ${row.description}` : ""}${row.tooltip ? `. ${row.tooltip}` : ""}` };
     if (row.icon) item.iconPath = new vscode.ThemeIcon(row.icon);
-    if (row.command) item.command = { command: row.command, title: row.label };
+    if (row.command) item.command = { command: row.command, title: row.label, arguments: row.arguments };
     return item;
   }
   dispose(): void { this.changed.dispose(); }
@@ -64,7 +64,7 @@ export class StatsSidebar implements vscode.Disposable {
   update(state: SidebarState): void {
     this.state = state;
     for (const { id, provider, view } of this.entries) {
-      view.description = id === "today" ? !state.enabled ? "Paused" : state.refreshing ? "Refreshing…" : "Tracking" : state.account?.status === "connected" ? `@${state.account.account?.username ?? "Connected"}` : state.account?.status === "connecting" ? "Connecting…" : state.account?.status === "error" || state.account?.status === "expired" ? "Needs attention" : "Optional";
+      view.description = id === "today" ? !state.enabled ? "Paused" : state.refreshing ? "Refreshing…" : "Tracking" : id === "agents" ? agentsDescription(state.agents) : state.account?.status === "connected" ? `@${state.account.account?.username ?? "Connected"}` : state.account?.status === "connecting" ? "Connecting…" : state.account?.status === "error" || state.account?.status === "expired" ? "Needs attention" : "Optional";
       view.message = undefined;
       provider.refresh();
     }

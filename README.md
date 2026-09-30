@@ -24,7 +24,22 @@ New commands: **Show Telemetry Today**, **Compare Telemetry Weeks**, and **Show 
 
 ## Agent and external changes (local only)
 
-Changes made outside the editor are now observed and reconciled locally, whether by a terminal command, a script, Claude Code, Codex or a checkout. They never count as coding time. An agent is named only when its own opt-in hook reports the change (**Stack Stats: Set Up Agent Integrations**; settings `stackStats.agentIntegrations.claudeCode` / `.codex`, off by default); everything else stays "writer unknown". **Stack Stats: Show Agent Activity** lists agent runs, agent-reported changes and external changes side by side. Nothing here is synced or published. See [Phase 9E: agent-aware telemetry](docs/PHASE-9E-AGENT-TELEMETRY.md).
+External changes are tracked automatically. Connect an agent to label them.
+
+Changes made outside the editor are observed and reconciled locally with no setup, whether they come from a terminal command, a script, Claude Code, Codex or a checkout. They never count as coding time, and the writer stays "unknown".
+
+Connecting an agent is optional and takes one click:
+
+1. Open the **Agents** panel in the Stack Stats sidebar and click **Connect** next to Claude Code or Codex.
+2. Stack Stats shows exactly what it will add, and what the hook does and never reports, then asks you to confirm.
+3. Stack Stats adds its hook entries to that tool's user settings. Nothing else there is touched.
+4. For Codex only, approve the Stack Stats hooks when Codex asks; Codex requires that for any new hook.
+
+No JSON editing and no Node.js install are needed: the hook runs on the editor's own runtime. **Disconnect** removes only the Stack Stats entries. **Stack Stats: Show Agent Activity** lists agent runs, agent-reported changes and external changes side by side. Nothing here is synced or published.
+
+Before uninstalling Stack Stats, run **Stack Stats: Disconnect All Agent Integrations** so no hook entries are left in your agent settings. Leftover entries are harmless: they record nothing once Stack Stats is gone.
+
+See [Phase 9E: agent-aware telemetry](docs/PHASE-9E-AGENT-TELEMETRY.md) and [Phase 9E.1: one-click agent integrations](docs/PHASE-9E1-AGENT-INTEGRATIONS.md).
 
 ## What is tracked
 
@@ -77,7 +92,9 @@ Open the Command Palette and run:
 | **Stack Stats: Compare Telemetry Weeks** | Compare this week's observations with last week's |
 | **Stack Stats: Show Telemetry Privacy** | Collection policy, exclusions and measurement limits |
 | **Stack Stats: Show Agent Activity** | Local agent runs, agent-reported and external changes, kept separate from coding time |
-| **Stack Stats: Set Up Agent Integrations** | Print opt-in Claude Code / Codex hook configuration; never edits their settings |
+| **Stack Stats: Manage Agent Integrations** | Connect, repair or disconnect Claude Code / Codex; each change is shown and confirmed first |
+| **Stack Stats: Disconnect All Agent Integrations** | Remove every Stack Stats hook entry from agent settings (run before uninstalling) |
+| **Stack Stats: Verify Agent Integrations** | Re-check agent configuration, hook runtime and last activity; never runs an agent |
 | **Stack Stats: Refresh Stats** | Checkpoint and reload local history; also available in view title bars |
 | **Stack Stats: Open Dashboard** | Open https://stackstats.dev in the browser; no upload |
 | **Stack Stats: Connect Stack Stats Account** | Optional secure browser sign-in and explicit editor approval |

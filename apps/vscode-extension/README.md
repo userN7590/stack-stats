@@ -31,7 +31,8 @@ Use the Command Palette:
 | Stack Stats: Show Status | Inspect storage location and optional daemon delivery in the output channel |
 | Stack Stats: Show Telemetry Privacy | Inspect collection controls and limitations |
 | Stack Stats: Show Agent Activity | See agent runs and changes made outside the editor (local only) |
-| Stack Stats: Set Up Agent Integrations | Get the optional Claude Code / Codex hook configuration |
+| Stack Stats: Manage Agent Integrations | Connect or disconnect Claude Code / Codex with one click (optional) |
+| Stack Stats: Disconnect All Agent Integrations | Remove Stack Stats hooks from agent settings; run it before uninstalling |
 
 Developer commands for raw telemetry, week comparison, and local daemon retry remain available. They are not needed for normal sidebar use.
 
@@ -59,7 +60,7 @@ Open Settings and search **Stack Stats**.
 | `stackStats.collectFilesystem` / `collectGit` / `collectWorkflows` | `true` | Optional metadata collectors |
 | `stackStats.collectDiagnostics` / `allowAttributionReports` | `false` | Opt into diagnostic counts / explicit provenance reports |
 | `stackStats.rawRetentionDays` | `30` | Retention of acknowledged local raw batches and local agent/external records; `0` retains indefinitely |
-| `stackStats.agentIntegrations.claudeCode` / `codex` | `false` | Accept signals from the Stack Stats hook for that agent (hook setup is a separate, manual step) |
+| `stackStats.agentIntegrations.claudeCode` / `codex` | `false` | Managed by **Connect / Disconnect** in the Agents panel; turning one off pauses labeling without removing the hook |
 
 Changing the inactivity timeout does not change active-time estimation: only gaps of at most 60 seconds between eligible edits earn time. Reducing the timeout can close an already-idle session; recorded history is not recalculated.
 
@@ -67,7 +68,13 @@ Changing the inactivity timeout does not change active-time estimation: only gap
 
 Stack Stats stores metadata and counters, never source contents or prompts. Project/file identifiers are salted; common secret/generated paths are excluded by default. Additional exclusions apply to future collection. The sidebar uses the same local session summaries as existing APIs and never uploads them.
 
-Changes made outside the editor, by terminal commands, scripts, agents or checkouts, are observed separately and never add coding time. An agent is named only when its own opt-in hook reports the change; otherwise the writer stays unknown. These agent and external records stay on your device and are not part of profile sync.
+External changes are tracked automatically. Connect an agent to label them.
+
+Changes made outside the editor, by terminal commands, scripts, agents or checkouts, are observed separately and never add coding time. The writer stays unknown unless a connected agent reports the change.
+
+To connect an agent, open **Agents** in the Stack Stats sidebar and click **Connect**. Stack Stats shows what it will add to Claude Code or Codex settings and asks first. It never needs JSON editing or a Node.js install. For Codex, approve the Stack Stats hooks when Codex asks. **Disconnect** removes only what Stack Stats added.
+
+The hook reports agent lifecycle, tool activity metadata and file paths, which are used only on this device to match changes. It never reports prompts, responses, source code, commands or command output. These agent and external records stay on your device and are not part of profile sync.
 
 Lines mean gross editor newline-boundary changes, not a Git diff. Files edited means recorded file identities, not filesystem operations. Rename/Save As can create another identity. Activity counts do not establish authorship or productivity. Precise human/AI attribution and total working time cannot be inferred from these summaries.
 

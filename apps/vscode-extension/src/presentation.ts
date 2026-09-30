@@ -8,6 +8,8 @@ export function formatDuration(ms: number): string {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+export const formatAgo = (at: number, now: number) => now - at < 60_000 ? "just now" : `${formatDuration(now - at)} ago`;
+
 export function formatStatistics(title: string, stats: SessionStatistics): string {
   return [
     `Stack Stats — ${title}`, "", `Active coding time (estimate): ${formatDuration(stats.activeMs)}`,
