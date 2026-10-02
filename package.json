@@ -16,6 +16,8 @@
     "stackstats": "pnpm --filter @stack-stats/cli dev",
     "benchmark": "node --import tsx scripts/benchmark-telemetry.mts",
     "test:vscode:api": "pnpm --filter stack-stats-vscode build && node scripts/test-vscode.mjs --api-only",
+    "check:vsix": "node scripts/check-vsix.mjs",
+    "test:vsix": "node scripts/test-vsix.mjs",
     "benchmark:sync": "node --import tsx scripts/benchmark-sync.mts",
     "benchmark:provenance": "node --expose-gc --import tsx scripts/benchmark-provenance.mts"
   },

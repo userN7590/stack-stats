@@ -239,7 +239,12 @@ exports.run = async () => {
     assert.equal(stats.workflows.tests, 1, "VS Code task group captured");
     assert.equal(stats.workflows.completedTasks, 1);
     assert.equal(stats.edits.editCount, 0, "File/task observations do not invent coding");
-    const raw = await api.events({ ...range, limit: 1000 });
+    // macOS can deliver the watcher notification seconds later under load.
+    let raw = await api.events({ ...range, limit: 1000 });
+    for (let i = 0; i < 20 && !raw.events.some((event) => event.eventType === "filesystem.changed"); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      raw = await api.events({ ...range, limit: 1000 });
+    }
     assert(raw.events.some((event) => event.eventType === "filesystem.changed"), "Real filesystem watcher observed a change");
     const serialized = JSON.stringify(raw);
     for (const value of ["PRIVATE_SOURCE_NEVER_READ", "private-task-name", "external.txt", root]) assert(!serialized.includes(value), `${value} not in telemetry`);

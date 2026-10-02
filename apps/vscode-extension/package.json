@@ -1,9 +1,45 @@
 {
   "name": "stack-stats-vscode",
   "displayName": "Stack Stats",
-  "description": "Privacy-safe, local-first developer activity analytics.",
+  "description": "Local-first developer activity analytics: coding time, sessions, languages, projects and streaks. Optional private sync and a public developer profile.",
   "version": "0.5.0",
   "private": true,
+  "license": "MIT",
+  "icon": "resources/stack-stats-icon.png",
+  "galleryBanner": {
+    "color": "#11110d",
+    "theme": "dark"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "coding stats",
+    "coding time",
+    "time tracking",
+    "developer analytics",
+    "activity tracking",
+    "productivity",
+    "streak",
+    "developer profile",
+    "portfolio",
+    "local-first",
+    "privacy",
+    "git",
+    "claude code",
+    "codex",
+    "ai agents"
+  ],
+  "homepage": "https://stackstats.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/userN7590/stack-stats.git",
+    "directory": "apps/vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/userN7590/stack-stats/issues"
+  },
   "type": "module",
   "engines": {
     "vscode": "^1.95.0"
@@ -337,7 +373,7 @@
         {
           "id": "stackStats",
           "title": "Stack Stats",
-          "icon": "resources/stack-stats.svg"
+          "icon": "resources/stack-stats-activity-bar.svg"
         }
       ]
     },
@@ -455,7 +491,8 @@
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.cjs && esbuild src/agent-hook.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/agent-hook.cjs && esbuild src/uninstall.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/uninstall.cjs",
-    "package": "pnpm build && vsce package --no-dependencies --allow-missing-repository",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "pnpm run build",
     "vscode:uninstall": "node ./dist/uninstall.cjs"
   },
   "dependencies": {
@@ -469,15 +506,12 @@
     "@vscode/vsce": "^3.3.2",
     "esbuild": "^0.25.4"
   },
-  "categories": [
-    "Other"
-  ],
-  "license": "MIT",
   "files": [
     "dist/extension.cjs",
     "dist/agent-hook.cjs",
     "dist/uninstall.cjs",
-    "resources/stack-stats.svg",
+    "resources/stack-stats-icon.png",
+    "resources/stack-stats-activity-bar.svg",
     "README.md",
     "LICENSE"
   ]

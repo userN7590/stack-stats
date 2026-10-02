@@ -1,23 +1,38 @@
 # Stack Stats
 
-Your coding activity, on your device. Stack Stats starts tracking automatically when you edit in VS Code, with no account, CLI setup, or running server required.
+**Developer activity analytics and public developer profiles.**
 
-## Your sidebar
+Stack Stats turns your everyday coding in Visual Studio Code into a record you own. It tracks coding time, sessions, languages, projects and streaks on your device. When you're ready, you can publish the parts you choose to a public developer profile at [stackstats.dev](https://stackstats.dev) and link it from a portfolio, resume or application.
 
-Select the **Stack Stats** icon in the Activity Bar. There are now two native panels:
+- **Works right after install.** No account, setup or server is needed.
+- **Local first.** Your history stays on this device and works offline.
+- **You decide what leaves your machine.** Private sync and your public profile are separate choices, each off until you turn it on.
 
-- **Activity** puts Today first, with coding time and a compact set of line, file, edit, and session counts. Current session, This week, Languages, Projects, and Coding streak expand for detail. Today opens by default; the other groups stay collapsed until you need them. Weekly details include longest session, active days, and average active time. Language labels use familiar names such as TypeScript, with all recorded languages and projects still accessible.
-- **Account** starts collapsed and shows a single optional connection action. When connected, expand your account for Open Profile/Disconnect, and Profile sync for pending days, last success, consent and privacy controls. **On this device** shows your tracking level. **On this device → Troubleshooting** holds storage/history health, idle timeout, and daemon details. Errors are surfaced with short labels and explanatory tooltips.
+## What you get
 
-Refresh and pause/resume are in the Activity toolbar. Settings and diagnostic reports are in its **…** menu. All existing Command Palette commands and old view-focus keybindings continue to work; Show Today/This Week/Current Session now expand and focus their group in Activity. No data, collection settings, sync consent or credentials are migrated or changed by this layout update.
+- **Coding time and sessions.** Time is estimated from your edits, so idle time is never counted.
+- **Languages and projects,** ranked by active time. Project names stay private by default.
+- **Streaks and weekly totals,** including active days and your longest session.
+- **Lines and files edited.**
+- **Workflow analytics:** when you code during the day, saves and file switches, task runs and debug sessions, and Git activity.
+- **External changes and agent labels.** Changes made outside the editor are recorded separately from your coding time. Connect Claude Code or Codex to label the changes they report.
+- **Optional private sync** and a **public developer profile** at `stackstats.dev/u/<username>`.
 
-The status bar shows the current session's estimated active time. Click it to open Current Session. Hiding the status bar does not pause tracking.
+## Getting started
 
-Views update automatically as you edit, at most once per second. Idle time does not make the counter tick upward. Historical snapshots load on startup, when returning to the VS Code window, or when refreshing. Other windows' changes appear after their next checkpoint and a history refresh. Everything works offline.
+1. Install Stack Stats.
+2. Select the **Stack Stats** icon in the Activity Bar.
+3. Start coding.
+
+Tracking starts with your next edit. The status bar shows the current session, and the sidebar has three panels:
+
+- **Activity:** Today, current session, this week, languages, projects and your coding streak.
+- **Agents:** external changes and optional agent connections.
+- **Account:** the optional account, profile sync and your tracking level.
 
 ## How much Stack Stats tracks
 
-Run **Stack Stats: Change Tracking Level**. It is also in the Activity view's **…** menu and at **Account → On this device → Tracking level**.
+Run **Stack Stats: Change Tracking Level**, or use **Account → On this device → Tracking level**. New installs use Moderate.
 
 | Level | What it tracks |
 | --- | --- |
@@ -25,127 +40,122 @@ Run **Stack Stats: Change Tracking Level**. It is also in the Activity view's **
 | **Moderate — Recommended** (default) | Everything in Minimal, plus hourly patterns, editor workflow, tasks and debugging, external file changes, Git activity and labels from agents you connect. |
 | **Extensive** | Everything in Moderate, plus problem counts and reports from other extensions. Connecting AI tools stays your choice. |
 
-You can change the level anytime. It only affects what is collected on this device from now on, and your existing history is kept.
+Your tracking level only changes what this device collects from now on. Existing history is kept.
 
-Cloud sync and your public profile are controlled separately. Choosing a level never:
+A level never turns on sync, publishes anything or connects an agent.
 
-- turns on sync;
-- publishes anything;
-- connects Claude Code or Codex.
+**Advanced settings** lets you turn each capability on or off; any other combination shows as **Custom**. **Pause Tracking** stops all collection at every level.
 
-At a level without agent activity, a connected agent stays connected, but Stack Stats ignores it until you turn agent activity back on.
+## Privacy: three separate layers
 
-- **Pause Tracking** is separate: it collects nothing at any level.
-- **Advanced settings…** lets you choose each capability. Anything that isn't one of the three levels shows as **Custom**.
-- **Restore Recommended Tracking** returns to Moderate.
-- **Show Telemetry Privacy** lists what is collected locally, what is synced privately and what is public, each on its own.
+**1. Local collection (this device).** Stack Stats records timing and counts: when you edited, how much, in which language, and private IDs for projects and files. It never records source code, file contents, keystrokes, clipboard contents, prompts or command output.
+
+Common secret and generated paths are always excluded, such as `.env` files, keys, `node_modules` and build output, and you can add your own exclusions. History is stored in VS Code's storage for this extension on your machine.
+
+**2. Private sync (optional, off by default).** Nothing is uploaded until you connect an account **and** approve Profile Sync in your browser. Sync then uploads daily summaries for the last 90 days and new activity:
+
+- coding time;
+- edit and line counts;
+- session counts and durations;
+- file counts;
+- language totals;
+- project totals under private random-looking IDs.
+
+Hour-of-day patterns are a separate setting. File names, paths, project names, source code, prompts and agent records are never uploaded.
+
+**3. Public profile (optional).** Nothing becomes public by itself. On stackstats.dev you choose, metric by metric, what appears on your profile. Project activity is never published, and charts that reveal your daily schedule need a separate consent.
+
+Run **Stack Stats: Show Telemetry Privacy** to see what your current settings collect, sync and publish.
+
+**Network access.** Without an account, Stack Stats makes no network requests of its own. After you connect an account, it checks the connection with stackstats.dev from time to time. After you enable Profile Sync, it uploads the daily summaries described above. A local loopback service is used only if you set up the optional Stack Stats command-line tools. Local tracking never waits for the network.
+
+## Agent integrations (optional)
+
+At the Moderate and Extensive levels, external changes are tracked automatically. These are changes made outside the editor by terminals, scripts, AI agents or Git checkouts. They never count as coding time, and the writer is recorded as unknown.
+
+To label an agent's changes, open the **Agents** panel and click **Connect** next to **Claude Code** or **Codex**:
+
+1. Stack Stats shows exactly what it will add to that tool's settings and asks before changing anything.
+2. For Codex, approve the Stack Stats hooks when Codex asks; Codex requires this for every new hook.
+3. **Disconnect** removes only what Stack Stats added.
+
+No JSON editing or Node.js install is needed.
+
+What the hooks share:
+
+- **Reported:** run start and end, tool-activity metadata and file paths. These are used only on this device to match changes.
+- **Never reported:** prompts, responses, source code, commands and command output.
+
+Agent and external-change records stay on this device. They are never synced or published.
+
+A label shows which tool reported a change. It is not proof of authorship, and agent time is never added to your coding time.
+
+## Account and sync (optional)
+
+- **No account needed.** Stack Stats works fully on its own.
+- **Connect account** (Account panel) opens stackstats.dev in your browser, where you sign in and approve this editor. VS Code first asks whether to open the external website. Connecting by itself uploads nothing.
+- **Enable Profile Sync** asks for a separate approval in your browser before any daily summaries are uploaded. **Disable Profile Sync** stops uploads; your local history stays.
+- **Publishing** is a third, separate step on stackstats.dev.
+
+Credentials are kept in VS Code's secure SecretStorage, never in settings or logs. **Disconnect Account** removes them from this device and revokes the connection when online.
 
 ## Commands
 
-Use the Command Palette:
+Open the Command Palette and type **Stack Stats**:
 
-| Command | Action |
+| Command | What it does |
 | --- | --- |
-| Stack Stats: Show Today | Expand Today in Activity |
-| Stack Stats: Show This Week | Expand This week in Activity |
-| Stack Stats: Show Current Session | Expand Current session in Activity |
-| Stack Stats: Pause Tracking / Resume Tracking | Change background tracking across windows |
-| Stack Stats: Refresh Stats | Checkpoint and reload local history |
-| Stack Stats: Open Dashboard | Open https://stackstats.dev in your browser; no data is uploaded |
-| Stack Stats: Open Settings | Open Stack Stats preferences |
-| Stack Stats: Show Status | Inspect storage location and optional daemon delivery in the output channel |
-| Stack Stats: Change Tracking Level | Choose Minimal, Moderate (recommended) or Extensive |
-| Stack Stats: Open Advanced Tracking Settings | Turn individual tracking capabilities on or off |
-| Stack Stats: Restore Recommended Tracking | Return to Moderate; sync, publication and agent connections are untouched |
-| Stack Stats: Show Telemetry Privacy | Your tracking level, local collection, private sync and public profile, each stated separately |
-| Stack Stats: Show Agent Activity | See agent runs and changes made outside the editor (local only) |
-| Stack Stats: Manage Agent Integrations | Connect or disconnect Claude Code / Codex with one click (optional) |
-| Stack Stats: Disconnect All Agent Integrations | Remove Stack Stats hooks from agent settings; run it before uninstalling |
+| Stack Stats: Show Today | Open today's activity in the sidebar |
+| Stack Stats: Show This Week | Open this week's totals |
+| Stack Stats: Pause Tracking / Resume Tracking | Stop or restart collection in every window |
+| Stack Stats: Change Tracking Level | Choose Minimal, Moderate or Extensive |
+| Stack Stats: Open Advanced Tracking Settings | Turn individual capabilities on or off |
+| Stack Stats: Show Telemetry Privacy | What is collected locally, synced privately and public |
+| Stack Stats: Manage Agent Integrations | Connect or disconnect Claude Code and Codex |
+| Stack Stats: Show Agent Activity | Agent runs and external changes on this device |
+| Stack Stats: Connect Stack Stats Account | Optional sign-in through your browser |
+| Stack Stats: Enable Profile Sync | Optional private upload of daily summaries, after browser approval |
+| Stack Stats: Open Profile | Open your public profile |
+| Stack Stats: Disconnect All Agent Integrations | Remove Stack Stats hooks from agent settings |
 
-Developer commands for raw telemetry, week comparison, and local daemon retry remain available. They are not needed for normal sidebar use.
+## Settings
 
-## Optional account connection
+Most people only need **Change Tracking Level**. To see every option, open Settings and search for **Stack Stats**. Settings are grouped into Tracking, Privacy and storage, Agents, Profile sync and Display.
 
-Stack Stats tracks locally by default. Connecting an account enables optional profile synchronization. **Connecting alone does not enable telemetry synchronization.**
-
-Use **Account → Connect account**, sign in or sign up on stackstats.dev, and approve the connection. The browser returns a short-lived authorization code to VS Code; long-lived credentials never appear in callback URLs. The sidebar shows **@username · Connected**. **Open Profile** opens your public profile; when disconnected, it starts linking. **Cancel Account Connection** or the browser Cancel action cancels a pending request; closing the browser times out after ten minutes.
-
-**Disconnect Account** removes local account credentials without deleting your account or coding history. It also attempts server revocation; if offline, visit https://stackstats.dev/extension/connect later to revoke all editor connections. Storage failures are shown explicitly. Authentication errors never pause local tracking.
-
-VS Code SecretStorage holds access/refresh credentials, their expiry times, user ID, username, display name and profile URL. Pending PKCE verifier/state data is also kept there temporarily. Nothing is stored in settings, telemetry files, SQLite, or logs. Access lasts 15 minutes; the identity-only refresh credential has a fixed 30-day lifetime and can be revoked. No coding history is uploaded by connecting. The web auth routes and database migration must be deployed before production linking is available.
-
-## Preferences
-
-Most people only need **Change Tracking Level**. Open Settings and search **Stack Stats** for the rest. Settings are grouped into:
-
-- **Tracking**
-- **Privacy and storage**
-- **Agents**
-- **Profile sync**
-- **Display**
-
-**Tracking.** The level is read from these settings. Each one is stored on this device.
-
-| Setting | Default (Moderate) | Tracks |
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `stackStats.enabled` | `true` | Everything; Pause Tracking turns it off. Not part of the level |
-| `stackStats.collectActivityTimeline` | `true` | Hourly activity patterns: when you code, plus characters and undo/redo |
-| `stackStats.collectEditorEvents` | `true` | Editor workflow: saves, file switches, window focus, file create/rename/delete |
-| `stackStats.collectWorkflows` | `true` | Tasks and debugging |
-| `stackStats.collectDiagnostics` | `false` | Problem counts |
-| `stackStats.collectFilesystem` | `true` | External file changes |
-| `stackStats.collectGit` | `true` | Git activity |
-| `stackStats.collectAgentActivity` | `true` | Agent activity: labels from agents you connect; needs external file changes |
-| `stackStats.allowAttributionReports` | `false` | Reports from other extensions; needs hourly activity patterns |
+| `stackStats.excludeFiles` / `stackStats.excludeProjects` | `[]` | Extra files or projects to ignore, using `*`, `**` and `?` globs |
+| `stackStats.includeProjectNames` | `false` | Record folder names for new activity instead of private project labels |
+| `stackStats.syncHourlyActivity` | `false` | Include hour-of-day patterns in private sync |
+| `stackStats.inactivityTimeoutMinutes` | `5` | Minutes without edits before a session ends |
+| `stackStats.showStatusBar` | `true` | Show the current session in the status bar |
 
-**Other settings:**
+## What the numbers mean
 
-| Setting | Default | Effect |
-| --- | --- | --- |
-| `stackStats.includeProjectNames` | `false` | Opt into project names in future records; otherwise use private project labels |
-| `stackStats.excludeFiles` / `excludeProjects` | `[]` | Additional exclusions using `*`, `**`, and `?` globs |
-| `stackStats.rawRetentionDays` | `30` | Retention of acknowledged local raw batches and local agent/external records; `0` retains indefinitely |
-| `stackStats.agentIntegrations.claudeCode` / `codex` | `false` | Managed by **Connect / Disconnect** in the Agents panel; turning one off pauses labeling without removing the hook |
-| `stackStats.syncHourlyActivity` | `false` | Include hourly patterns in private profile sync; publishing stays separate |
-| `stackStats.showStatusBar` | `true` | Show the tracking status bar item |
-| `stackStats.inactivityTimeoutMinutes` | `5` | Session grouping timeout, 1–60 minutes; applies immediately |
+- **Coding time** counts the gaps of 60 seconds or less between edits in a focused editor. Reading, planning and long pauses are not counted, so it is not total working time.
+- **Lines** are gross line changes seen by the editor, including undo and redo, not a Git diff.
+- **External changes** have line counts only for files open in the editor.
+- **Separate devices.** Each device tracks independently. If you code on several devices at the same time, the overlapping time is counted on each one; it is not deduplicated.
+- **Not a scorecard.** Activity is evidence of editor use, not a measure of skill, authorship or productivity.
 
-Changing the inactivity timeout does not change active-time estimation: only gaps of at most 60 seconds between eligible edits earn time. Reducing the timeout can close an already-idle session; recorded history is not recalculated.
+## Requirements and limitations
 
-## Privacy and measurement
+- **Editor:** VS Code 1.95 or later on the desktop. The browser-based editor (vscode.dev) is not supported.
+- **Restricted Mode:** VS Code disables Stack Stats in folders you have not trusted.
+- **Remote:** with Remote SSH, WSL or containers, history is stored on the machine where the workspace runs.
+- **Agent integrations** support Claude Code and Codex. They are verified on macOS; Linux and Windows support is implemented but not yet verified with real agents.
 
-Stack Stats stores metadata and counters, never source contents or prompts. Project/file identifiers are salted; common secret/generated paths are excluded by default. Additional exclusions apply to future collection. The sidebar uses the same local session summaries as existing APIs and never uploads them.
+## Uninstalling
 
-External changes are tracked automatically. Connect an agent to label them.
+If you connected an agent, run **Stack Stats: Disconnect All Agent Integrations** before uninstalling, so no Stack Stats hooks remain in its settings. If you forget, leftover hooks stay harmless: Stack Stats pauses them when it is uninstalled.
 
-Changes made outside the editor, by terminal commands, scripts, agents or checkouts, are observed separately and never add coding time. The writer stays unknown unless a connected agent reports the change.
+When VS Code finishes removing Stack Stats, which can take a restart, it deletes the extension's storage. That includes your local history on this device. Summaries you synced stay in your stackstats.dev account.
 
-To connect an agent, open **Agents** in the Stack Stats sidebar and click **Connect**. Stack Stats shows what it will add to Claude Code or Codex settings and asks first. It never needs JSON editing or a Node.js install. For Codex, approve the Stack Stats hooks when Codex asks. **Disconnect** removes only what Stack Stats added.
+If you connected an agent, the hook files and a backup of that tool's settings stay in the `.stackstats` folder in your home directory; delete that folder to remove them.
 
-The hook reports agent lifecycle, tool activity metadata and file paths, which are used only on this device to match changes. It never reports prompts, responses, source code, commands or command output. These agent and external records stay on your device and are not part of profile sync.
+## Links
 
-Lines mean gross editor newline-boundary changes, not a Git diff. Files edited means recorded file identities, not filesystem operations. Rename/Save As can create another identity. Activity counts do not establish authorship or productivity. Precise human/AI attribution and total working time cannot be inferred from these summaries.
-
-Your local history survives closing VS Code. Checkpoints run every 15 seconds and on normal shutdown; an abrupt crash can lose recent uncheckpointed activity. Storage failures and incomplete history appear in the sidebar. Refresh retries, and **Show Status** provides the history location for troubleshooting. Existing session history is retained; raw-event retention is separate.
-
-## Install and develop
-
-Install a supplied `.vsix` using **Extensions → … → Install from VSIX…**, then reload VS Code if prompted. Open a folder and select Stack Stats in the Activity Bar. Tracking starts with your next eligible edit. Marketplace publication is not part of this build. Account linking and separately consented private aggregate synchronization are optional.
-
-For development, from the repository root run `pnpm install` and `pnpm build`. Open `apps/vscode-extension` as the VS Code folder, press **F5**, and choose **Run Stack Stats Extension**. In the Extension Development Host, open a project and edit a file twice several seconds apart. Inspect Current Session and Today, then test pause/resume and the preferences above. The launch configuration builds the extension before starting the host.
-
-To create an installable artifact, run `pnpm --filter stack-stats-vscode package` from the repository root. The bundle includes the sidebar icon and this documentation; it does not require workspace dependencies on the user's machine.
-
-## Optional profile synchronization
-
-Run **Stack Stats: Enable Profile Sync** and approve `stats:write` in your browser. This uploads private daily summaries for the last 90 local calendar days and subsequent activity: coding time, edit/line counts, daily file/session counts, standard language totals, and salted opaque project totals. No source, filenames, paths, project names, prompts, raw events, or AI authorship claims are uploaded. Existing local exclusions do not retroactively filter older history.
-
-Account connection alone stays identity-only. **Disable Profile Sync** persists across restarts and windows, keeps local history and existing server records, and leaves public visibility unchanged. **Sync Now** retries up to ten days; it never overrides disabled consent. **Manage Sync Privacy** opens the separate default-off publication controls. **Open Profile** uses your existing profile.
-
-Account → Profile sync shows pending days, last success, offline/pending and errors. Uploads run in batches, with durable bounded offline retries; local tracking never waits for the network. Multiple devices contribute independent records; overlapping activity cannot yet be deduplicated across editors. Combined file/session counts are file-days/session-days.
-
-Credentials and pending refresh rotations use VS Code SecretStorage. A random installation UUID, private pseudonymization salt, daily aggregate queue, consent and retry metadata use private extension storage. No sync credentials go into settings, SQLite, logs, or callback URLs. Disconnect removes local credentials, disables this installation and attempts server revocation; uploaded records remain.
-
-Publishing is a separate choice at stackstats.dev/settings/sync. Synced totals replace displayed manual totals only after explicit approval and an upload; manual values remain saved. Languages need their own publication approval. Projects and individual historical dates stay private.
-
-For F5 against a local web server on localhost:3000, choose **Run Stack Stats Extension (local account server)**. The web repository needs the identity and profile-sync migrations applied to an isolated staging Supabase project. Full protocol, limits, privacy, initial-history behavior and testing instructions are in the source repository's `docs/SYNC.md`.
+- Website: [stackstats.dev](https://stackstats.dev)
+- Source code and issue tracker: [github.com/userN7590/stack-stats](https://github.com/userN7590/stack-stats) ([report an issue](https://github.com/userN7590/stack-stats/issues))
+- Technical privacy and data details: [docs/TELEMETRY.md](https://github.com/userN7590/stack-stats/blob/main/docs/TELEMETRY.md)
+- License: [MIT](https://github.com/userN7590/stack-stats/blob/main/LICENSE)
