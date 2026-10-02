@@ -17,7 +17,10 @@ export function createAccountService(context: vscode.ExtensionContext): AccountS
     secrets: context.secrets, origin,
     withRefreshLock: action => exclusive(join(context.globalStorageUri.fsPath, "account-refresh"), async check => { const result = await action(); check(); return result; }),
     callbackUri: async () => (await vscode.env.asExternalUri(callback)).toString(true),
-    openBrowser: uri => vscode.env.openExternal(vscode.Uri.parse(uri))
+    // Keep URLSearchParams encoding intact: the URI-object opener double-encodes
+    // nested callback query separators (microsoft/vscode#135949). The runtime
+    // accepts strings, although vscode.d.ts only declares the Uri overload.
+    openBrowser: uri => vscode.env.openExternal(uri as unknown as vscode.Uri)
   });
   context.subscriptions.push(service, vscode.window.registerUriHandler({
     handleUri: async uri => {
