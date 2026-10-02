@@ -6,7 +6,7 @@ Activity and lines changed are evidence of editor usage, **not measures of devel
 
 ## VS Code sidebar
 
-Build an installable VSIX with `pnpm --filter stack-stats-vscode package` and install it using **Extensions → … → Install from VSIX…**, then reload if prompted. The Visual Studio Marketplace release is being prepared; see [Phase 10A: Marketplace release prep](docs/PHASE-10A-MARKETPLACE-PREP.md). No CLI, account, or daemon is required. Tracking starts automatically on eligible edits.
+Build an installable VSIX with `pnpm --filter stack-stats-vscode package` and install it using **Extensions → … → Install from VSIX…**, then reload if prompted. The 0.6.0 Marketplace release candidate is `StackStats.stack-stats-vscode`; see [Phase 10B: release candidate and beta migration](docs/PHASE-10B-RELEASE-CANDIDATE.md). Back up beta history before uninstalling the old identity. No CLI, account, or daemon is required. Tracking starts automatically on eligible edits.
 
 Select the Stack Stats icon for two native panels: **Activity** and **Account**. Activity leads with Today’s coding time and compact counts; Current session, This week, Languages, Projects and Coding streak expand for detail. Today opens by default. Weekly metrics, timestamps and full language/project breakdowns remain available. Account starts collapsed and keeps connection/sync controls together; storage, history, idle timeout and daemon information live under **On this device → Troubleshooting**. Refresh and pause/resume are toolbar actions; settings and diagnostics are in **…**. Existing commands and legacy view-focus keybindings still work.
 

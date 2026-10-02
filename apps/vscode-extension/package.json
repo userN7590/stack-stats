@@ -1,8 +1,9 @@
 {
   "name": "stack-stats-vscode",
+  "publisher": "StackStats",
   "displayName": "Stack Stats",
   "description": "Local-first developer activity analytics: coding time, sessions, languages, projects and streaks. Optional private sync and a public developer profile.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "license": "MIT",
   "icon": "resources/stack-stats-icon.png",
@@ -513,6 +514,7 @@
     "resources/stack-stats-icon.png",
     "resources/stack-stats-activity-bar.svg",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ]
 }

@@ -13,6 +13,9 @@ export function createAccountService(context: vscode.ExtensionContext): AccountS
     } catch { /* Invalid development overrides never prevent local tracking. */ }
   }
   const callback = vscode.Uri.from({ scheme: vscode.env.uriScheme, authority: context.extension.id, path: "/auth/callback" });
+  // VS Code preserves the publisher's case in extension.id and Uri.authority,
+  // but lowercases the authority when serializing the URI for the browser.
+  const serializedAuthority = vscode.Uri.parse(callback.toString(true)).authority;
   const service = new AccountService({
     secrets: context.secrets, origin,
     withRefreshLock: action => exclusive(join(context.globalStorageUri.fsPath, "account-refresh"), async check => { const result = await action(); check(); return result; }),
@@ -24,7 +27,7 @@ export function createAccountService(context: vscode.ExtensionContext): AccountS
   });
   context.subscriptions.push(service, vscode.window.registerUriHandler({
     handleUri: async uri => {
-      if (uri.scheme !== callback.scheme || uri.authority !== callback.authority || uri.path !== callback.path || uri.fragment) return;
+      if (uri.scheme !== callback.scheme || (uri.authority !== callback.authority && uri.authority !== serializedAuthority) || uri.path !== callback.path || uri.fragment) return;
       await service.handleCallback(new URLSearchParams(uri.query));
     }
   }), context.secrets.onDidChange(event => {

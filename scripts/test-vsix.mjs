@@ -188,9 +188,12 @@ async function scenario(name, tests, { devtoolsChecks, expectedCommandFailures }
   const home = join(root, "daemon");
   const code = (...flags) => spawnSync(cli, [...profile, ...flags], { encoding: "utf8", env: { ...cleanEnv, STACK_STATS_HOME: home } });
   const installed = () => code("--list-extensions", "--show-versions").stdout.trim().split("\n");
+  // VS Code's CLI prints lowercase IDs; package.json and Extension.id retain the
+  // confirmed publisher spelling, checked independently by the archive/host tests.
+  const installedRelease = () => installed().some((line) => line.toLowerCase() === `${check.id}@${check.version}`.toLowerCase());
   const install = code("--install-extension", resolve(vsix), "--force");
   if (install.status !== 0) throw new Error(`Install failed: ${install.stdout}${install.stderr}`);
-  if (!installed().includes(`${check.id}@${check.version}`)) throw new Error(`Installed extensions: ${installed().join(", ")}`);
+  if (!installedRelease()) throw new Error(`Installed extensions: ${installed().join(", ")}`);
   console.log(`[${name}] installed ${check.id}@${check.version} into a clean profile`);
 
   const port = devtoolsChecks ? await freePort() : undefined;
@@ -241,7 +244,7 @@ async function scenario(name, tests, { devtoolsChecks, expectedCommandFailures }
     const state = () => readFile(join(home, "agent-inbox-v1", "state.json"), "utf8").then(JSON.parse);
     const collecting = (await state()).collecting;
     const removed = code("--uninstall-extension", check.id);
-    if (removed.status !== 0 || installed().some((line) => line.startsWith(`${check.id}@`))) logs.problems.push(`Uninstall failed: ${removed.stdout}${removed.stderr}`);
+    if (removed.status !== 0 || installed().some((line) => line.toLowerCase().startsWith(`${check.id.toLowerCase()}@`))) logs.problems.push(`Uninstall failed: ${removed.stdout}${removed.stderr}`);
     // The first start marks the extension as removed; a later start deletes it.
     await writeFile(join(root, "settle.cjs"), "exports.run = () => new Promise((done) => setTimeout(done, 5000));\n");
     const leftovers = async () => (await readdir(join(root, "extensions"))).filter((entry) => entry.toLowerCase().startsWith(check.id.toLowerCase()));
@@ -253,7 +256,7 @@ async function scenario(name, tests, { devtoolsChecks, expectedCommandFailures }
     if (await exists(storage)) logs.problems.push("VS Code kept the extension's storage after removing it; update the uninstall documentation");
     if (collecting && (await state()).collecting !== false) logs.problems.push("The vscode:uninstall hook did not pause Stack Stats' agent hook state");
     const again = code("--install-extension", resolve(vsix), "--force");
-    if (again.status !== 0 || !installed().includes(`${check.id}@${check.version}`)) logs.problems.push(`Reinstall failed: ${again.stdout}${again.stderr}`);
+    if (again.status !== 0 || !installedRelease()) logs.problems.push(`Reinstall failed: ${again.stdout}${again.stderr}`);
     else console.log(`[${name}] reinstalled ${check.id}@${check.version}`);
   }
   for (const problem of logs.problems) console.error(`[${name}] log: ${problem}`);

@@ -58,7 +58,7 @@ export async function checkVsix(file, { release = false } = {}) {
   const id = `${publisher}.${manifest.name}`;
 
   // Exactly the declared `files`, as vsce names them, plus the archive metadata.
-  const packaged = (path) => `extension/${path === "README.md" ? "readme.md" : path === "LICENSE" ? "LICENSE.txt" : path}`;
+  const packaged = (path) => `extension/${["README.md", "CHANGELOG.md"].includes(path) ? path.toLowerCase() : path === "LICENSE" ? "LICENSE.txt" : path}`;
   const expected = new Set(["[Content_Types].xml", "extension.vsixmanifest", "extension/package.json", ...(manifest.files ?? []).map(packaged)]);
   for (const name of entries.keys()) if (!expected.has(name)) errors.push(`Unexpected file in VSIX: ${name}`);
   for (const name of expected) if (!entries.has(name)) errors.push(`Missing from VSIX: ${name}`);
@@ -86,6 +86,8 @@ export async function checkVsix(file, { release = false } = {}) {
     if (!/^https:\/\//.test(value ?? "")) errors.push(`Manifest ${field} must be an https URL`);
   }
   if (!manifest.publisher) (release ? errors : warnings).push(`No "publisher": this build installs as ${id}. Set the confirmed publisher ID before the release build.`);
+  if (!identity || identity[1] !== manifest.name || identity[2] !== manifest.version || identity[3] !== (manifest.publisher ?? "undefined")) errors.push("VSIX identity does not match package.json");
+  if (release && id !== "StackStats.stack-stats-vscode") errors.push("Release identity must be exactly StackStats.stack-stats-vscode");
 
   // The Marketplace page renders the packaged README: absolute https links only.
   const readme = text("extension/readme.md") ?? "";

@@ -147,6 +147,8 @@ Most people only need **Change Tracking Level**. To see every option, open Setti
 
 ## Uninstalling
 
+**Upgrading from a beta VSIX:** version 0.6.0 uses the publisher identity `StackStats.stack-stats-vscode`. Back up your beta history before removing the old extension, and keep the old extension disabled when using the new one. Settings carry over; account sign-in and sync approval are required again. Follow the [beta migration guide](https://github.com/userN7590/stack-stats/blob/main/docs/PHASE-10B-RELEASE-CANDIDATE.md) before uninstalling.
+
 If you connected an agent, run **Stack Stats: Disconnect All Agent Integrations** before uninstalling, so no Stack Stats hooks remain in its settings. If you forget, leftover hooks stay harmless: Stack Stats pauses them when it is uninstalled.
 
 When VS Code finishes removing Stack Stats, which can take a restart, it deletes the extension's storage. That includes your local history on this device. Summaries you synced stay in your stackstats.dev account.

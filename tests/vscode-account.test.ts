@@ -9,19 +9,21 @@ const host = vi.hoisted(() => ({
 vi.mock("vscode", () => ({
   ExtensionMode: { Production: 1, Development: 2 },
   Uri: {
-    from: (uri: { scheme: string; authority: string; path: string }) => uri,
+    from: (uri: { scheme: string; authority: string; path: string }) => ({ ...uri,
+      toString: () => `${uri.scheme}://${uri.authority.toLowerCase()}${uri.path}`
+    }),
     // Model the URI-object path in VS Code's external opener: parse decodes the
     // query, toString(true) escapes its nested '?', then encodeURI escapes '%'.
     // https://github.com/microsoft/vscode/issues/135949
     parse: (value: string) => {
       const url = new URL(value);
-      return { toString: () => `${url.origin}${url.pathname}?${decodeURIComponent(url.search.slice(1)).replaceAll("?", "%3F")}` };
+      return { authority: url.host, toString: () => `${url.origin}${url.pathname}?${decodeURIComponent(url.search.slice(1)).replaceAll("?", "%3F")}` };
     }
   },
   env: {
     get uriScheme() { return host.scheme; },
     asExternalUri: async (uri: { scheme: string; authority: string; path: string }) => ({
-      toString: () => `${uri.scheme}://${uri.authority}${uri.path}${host.windowId === undefined ? "" : `?windowId=${host.windowId}`}`
+      toString: () => `${uri.scheme}://${uri.authority.toLowerCase()}${uri.path}${host.windowId === undefined ? "" : `?windowId=${host.windowId}`}`
     }),
     openExternal: async (target: string | { toString(skipEncoding: boolean): string }) => {
       host.opened = typeof target === "string" ? target : encodeURI(target.toString(true));
@@ -33,11 +35,11 @@ vi.mock("vscode", () => ({
 }));
 import { createAccountService } from "../apps/vscode-extension/src/vscode-account.js";
 
-function harness() {
+function harness(extensionId = "undefined_publisher.stack-stats-vscode") {
   const values = new Map<string, string>();
   const subscriptions: vscode.Disposable[] = [];
   const context = {
-    extensionMode: 1, extension: { id: "undefined_publisher.stack-stats-vscode" },
+    extensionMode: 1, extension: { id: extensionId },
     globalStorageUri: { fsPath: "/unused" }, subscriptions,
     secrets: {
       get: async (key: string) => values.get(key),
@@ -57,25 +59,27 @@ afterEach(() => {
 });
 
 describe("account browser URI serialization", () => {
-  for (const scheme of ["vscode", "vscode-insiders", "cursor", "windsurf"]) {
-    for (const windowId of [undefined, "1", "9876543210"]) {
-      for (const scope of [undefined, "stats:write"] as const) {
-        it(`preserves ${scheme} callback, window ${windowId ?? "none"}, scope ${scope ?? "identity"}`, async () => {
-          host.scheme = scheme; host.windowId = windowId;
-          const { service, values } = harness();
-          await service.connect(scope);
-          const pending = JSON.parse(values.get(service.pendingKey)!);
-          const expected = `${scheme}://undefined_publisher.stack-stats-vscode/auth/callback${windowId === undefined ? "" : `?windowId=${windowId}`}`;
-          const url = new URL(host.opened);
-          expect(pending.redirectUri).toBe(expected);
-          expect(url.searchParams.get("redirectUri")).toBe(expected);
-          expect(url.searchParams.get("redirectUri")).not.toContain("%3F");
-          expect(url.origin + url.pathname).toBe("https://stackstats.dev/extension/connect");
-          expect(url.searchParams.get("state")).toBe(pending.state);
-          expect(url.searchParams.get("challenge")).toBe(createHash("sha256").update(pending.verifier).digest("base64url"));
-          expect(url.searchParams.get("scope")).toBe(scope ?? null);
-          expect(service.getState().status).toBe("connecting");
-        });
+  for (const extensionId of ["undefined_publisher.stack-stats-vscode", "StackStats.stack-stats-vscode"]) {
+    for (const scheme of ["vscode", "vscode-insiders", "cursor", "windsurf"]) {
+      for (const windowId of [undefined, "1", "9876543210"]) {
+        for (const scope of [undefined, "stats:write"] as const) {
+          it(`preserves ${scheme} ${extensionId} callback, window ${windowId ?? "none"}, scope ${scope ?? "identity"}`, async () => {
+            host.scheme = scheme; host.windowId = windowId;
+            const { service, values } = harness(extensionId);
+            await service.connect(scope);
+            const pending = JSON.parse(values.get(service.pendingKey)!);
+            const expected = `${scheme}://${extensionId.toLowerCase()}/auth/callback${windowId === undefined ? "" : `?windowId=${windowId}`}`;
+            const url = new URL(host.opened);
+            expect(pending.redirectUri).toBe(expected);
+            expect(url.searchParams.get("redirectUri")).toBe(expected);
+            expect(url.searchParams.get("redirectUri")).not.toContain("%3F");
+            expect(url.origin + url.pathname).toBe("https://stackstats.dev/extension/connect");
+            expect(url.searchParams.get("state")).toBe(pending.state);
+            expect(url.searchParams.get("challenge")).toBe(createHash("sha256").update(pending.verifier).digest("base64url"));
+            expect(url.searchParams.get("scope")).toBe(scope ?? null);
+            expect(service.getState().status).toBe("connecting");
+          });
+        }
       }
     }
   }
